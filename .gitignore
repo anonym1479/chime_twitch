@@ -1,5 +1,6 @@
 # Virtual environment
 .venv/
+.tio.tokens.json
 
 # Environment variables
 .env
