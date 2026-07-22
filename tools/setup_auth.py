@@ -1,133 +1,93 @@
 import os
-import json
 import requests
-import threading
-import webbrowser
 from dotenv import load_dotenv
-from urllib.parse import urlparse, parse_qs
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
 load_dotenv()
-CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
-CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
-REDIRECT_URI = "http://localhost:8765"
-SCOPES = [
-    "chat:read",
-    "chat:edit",
-    "user:write:chat",
-    "channel:moderate"
-]
-AUTH_CODE = None
 
+client_id = os.getenv("TWITCH_CLIENT_ID")
+client_secret = os.getenv("TWITCH_CLIENT_SECRET")
 
-class OAuthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global AUTH_CODE
-        query = parse_qs(urlparse(self.path).query)
-        if "code" in query:
-            AUTH_CODE = query["code"][0]
+if not client_id or not client_secret:
+    print("Error: Please enter TWITCH_CLIENT_ID and CLIENT_SECRET in the .env file first!")
+    exit()
 
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write(
-                b"""
-                <html>
-                <body>
-                <h1>Authorization successful!</h1>
-                <p>You can close this window.</p>
-                </body>
-                </html>
-                """
-            )
+redirect_uri = "http://localhost"
+scopes = "chat:read chat:edit user:write:chat channel:moderate"
 
-        else:
-            self.send_response(400)
-            self.end_headers()
+auth_url = (
+    f"https://id.twitch.tv/oauth2/authorize?"
+    f"client_id={client_id}&"
+    f"redirect_uri={redirect_uri}&"
+    f"response_type=code&"
+    f"scope={scopes.replace(' ', '+')}"
+)
 
+print("\n" + "="*60)
+print(" TWITCH OAUTH AUTHENTICATION (Code-based)")
+print("="*60)
+print("1. Open the following link in your browser:")
+print(f"\n{auth_url}\n")
+print("2. Sign in with your bot account and click on 'Authorize'.")
+print("3. The page will redirect to a URL that starts with: http://localhost/?code=VALAMI")
+print("   (If your browser says the page cannot be found, that's COMPLETELY NORMAL!)")
+print("4. Copy the entire URL or just the 'code=' part after it, and paste it below.")
+print("="*60 + "\n")
 
-def start_server():
-    server = HTTPServer(
-        ("localhost", 8765),
-        OAuthHandler
-    )
-    server.handle_request()
+code_input = input("Paste the full redirected URL OR just the code: ").strip()
 
+# If you entered the full URL, extract the code parameter from it.
+if "code=" in code_input:
+    try:
+        code = code_input.split("code=")[1].split("&")[0]
+    except IndexError:
+        code = code_input
+else:
+    code = code_input
 
-def main():
-    if not CLIENT_ID or not CLIENT_SECRET:
-        print("Error: Missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET from the .env") 
-        return
+if not code:
+    print("Error: You didn't provide a code!")
+    exit()
 
-    scope_string = "+".join(SCOPES)
-    url = (
-        "https://id.twitch.tv/oauth2/authorize?"
-        f"client_id={CLIENT_ID}"
-        f"&redirect_uri={REDIRECT_URI}"
-        "&response_type=code"
-        f"&scope={scope_string}"
-    )
+print("\nFetching tokens from Twitch...")
 
-    print("--------------------------------")
-    print("Starting Twitch OAuth") 
-    print("--------------------------------")
-    print(url)
-    print("--------------------------------")
+token_url = "https://id.twitch.tv/oauth2/token"
+payload = {
+    "client_id": client_id,
+    "client_secret": client_secret,
+    "code": code,
+    "grant_type": "authorization_code",
+    "redirect_uri": redirect_uri
+}
 
-    threading.Thread(
-        target=start_server,
-        daemon=True
-    ).start()
-    webbrowser.open(url)
+response = requests.post(token_url, data=payload)
+data = response.json()
 
-    global AUTH_CODE
-    while AUTH_CODE is None:
-        pass
-    print("\nReceived Code.") 
+if "access_token" in data:
+    access_token = data["access_token"]
+    refresh_token = data.get("refresh_token", "")
+    
+    # We also request the bot's user ID for security reasons.
+    headers = {
+        "Client-ID": client_id,
+        "Authorization": f"Bearer {access_token}"
+    }
+    user_res = requests.get("https://api.twitch.tv/helix/users", headers=headers).json()
+    bot_id = user_res["data"][0]["id"]
+    bot_username = user_res["data"][0]["login"]
 
-    response = requests.post(
-        "https://id.twitch.tv/oauth2/token",
-        data={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "code": AUTH_CODE,
-            "grant_type": "authorization_code",
-            "redirect_uri": REDIRECT_URI
-        }
-    )
+    # We update/write the .env file
+    env_content = f"""TWITCH_TOKEN=oauth:{access_token}
+    TWITCH_REFRESH_TOKEN={refresh_token}
+    TWITCH_CLIENT_ID={client_id}
+    TWITCH_CLIENT_SECRET={client_secret}
+    TWITCH_BOT_ID={bot_id}
+    TWITCH_BOT_USERNAME={bot_username}
+    """
 
-    token_data = response.json()
-    print("\nToken response:") 
-    print(json.dumps(token_data, indent=4))
+    with open(".env", "w", encoding="utf-8") as f:
+        f.write(env_content)
 
-    if "access_token" not in token_data:
-        print("Token generation failed.") 
-        return
-
-    access_token = token_data["access_token"]
-    refresh_token = token_data["refresh_token"]
-
-    validate = requests.get(
-        "https://id.twitch.tv/oauth2/validate",
-        headers={
-            "Authorization": f"OAuth {access_token}"
-        }
-
-    )
-    user_data = validate.json()
-
-    print("\nChecking token:") 
-    print(json.dumps(user_data, indent=4))
-
-    with open(".env", "a", encoding="utf-8") as file:
-        file.write("\n")
-        file.write(f"TWITCH_ACCESS_TOKEN={access_token}\n")
-        file.write(f"TWITCH_REFRESH_TOKEN={refresh_token}\n")
-        file.write(f"TWITCH_BOT_ID={user_data.get('user_id')}\n")
-        file.write(f"TWITCH_BOT_USERNAME={user_data.get('login')}\n")
-    print("\nDone! Token save to .env .") 
-
-
-if __name__ == "__main__":
-
-    main()
+    print("\n[SUCCESS] Tokens successfully saved to the .env file!")
+    print(f"Bot account: {bot_username} (ID: {bot_id})")
+else:
+    print(f"\nError occurred while fetching tokens: {data}")

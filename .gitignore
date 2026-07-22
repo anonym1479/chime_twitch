@@ -23,4 +23,8 @@ logs/
 Thumbs.db
 
 # Data
-/data
+data/project_context.md
+data/triggers.json
+data/config.json
+tools/get_ids.py
+tools/make_env.py

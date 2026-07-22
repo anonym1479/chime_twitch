@@ -1,0 +1,14 @@
+{
+    "your_streamer_name": {
+        "drops": {
+            "message": "Check your Drops progress in the Twitch Drops Dashboard: https://www.twitch.tv/drops/dashboard",
+            "pin": true
+        }
+    },
+    "other_streamer_name": {
+        "NO BS": {
+            "message": "Please do not Backseat or give unsolicited advice to the streamer. It is not welcome and will be removed.",
+            "pin": true
+        }
+    }
+}
