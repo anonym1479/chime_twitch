@@ -31,19 +31,19 @@ class ChimeBot(commands.Bot):
         self.add_cog(StreamCog(self))
         print("StreamCog loaded successfully.")
 
-    async def event_message(self, message):
-        if message.echo:
-          return
-
-        if message.content:
-           print(f"[{message.channel.name}] {message.author.name}: {message.content}")
-        await self.handle_commands(message)
-
 #    async def event_message(self, message):
 #        if message.echo:
-#            return
-#        if message.content.startswith("_"):
-#            print(f"[{message.channel.name}] {message.author.name}: {message.content}")
+#          return
+#
+#        if message.content:
+#           print(f"[{message.channel.name}] {message.author.name}: {message.content}")
 #        await self.handle_commands(message)
+
+    async def event_message(self, message):
+        if message.echo:
+            return
+        if message.content.startswith("_"):
+            print(f"[{message.channel.name}] {message.author.name}: {message.content}")
+        await self.handle_commands(message)
 
 bot = ChimeBot()
