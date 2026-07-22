@@ -27,5 +27,6 @@ Thumbs.db
 data/project_context.md
 data/triggers.json
 data/config.json
+data/pin_states.json
 tools/get_ids.py
 tools/make_env.py
