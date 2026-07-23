@@ -1,8 +1,44 @@
+import os
 import time
 import aiohttp
 
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 HELIX_STREAMS = "https://api.twitch.tv/helix/streams"
+
+# Module-level cache variables for App Access Tokens
+_app_access_token = None
+_token_expires_at = 0
+
+# def get_app_access_token() -> str:
+#     """
+#     Fetches or returns a cached App Access Token using Client Credentials grant.
+#     App Access Tokens last ~60 days and do not use refresh tokens.
+#     """
+#     global _app_access_token, _token_expires_at
+#     current_time = time.time()
+#     
+#     if _app_access_token and current_time < (_token_expires_at - 300):
+#         return _app_access_token
+#         
+#     client_id = os.getenv("TWITCH_CLIENT_ID")
+#     client_secret = os.getenv("TWITCH_CLIENT_SECRET")
+#     
+#     payload = {
+#         "client_id": client_id,
+#         "client_secret": client_secret,
+#         "grant_type": "client_credentials"
+#     }
+#     
+#     import requests
+#     response = requests.post(TOKEN_URL, data=payload)
+#     if response.status_code == 200:
+#         data = response.json()
+#         _app_access_token = data.get("access_token")
+#         expires_in = data.get("expires_in", 5184000)
+#         _token_expires_at = current_time + expires_in
+#         return _app_access_token
+#     else:
+#         raise Exception(f"Failed to obtain App Access Token: {response.status_code} - {response.text}")
 
 class TwitchAPI:
     def __init__(self, client_id: str, client_secret: str):
@@ -11,28 +47,30 @@ class TwitchAPI:
         self._token: str | None = None
         self._expires_at: float = 0.0
 
-    async def _get_token(self, session: aiohttp.ClientSession) -> str:
-        if self._token and time.time() < (self._expires_at - 60):
-            return self._token
-
-        params = {
+    async def _get_app_access_token(self, session: aiohttp.ClientSession) -> str:
+        payload = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
-            "grant_type": "client_credentials",
+            "grant_type": "client_credentials"
         }
-        async with session.post(TOKEN_URL, params=params, timeout=20) as r:
-            data = await r.json()
-            if r.status != 200:
-                raise RuntimeError(f"Twitch token error {r.status}: {data}")
+        async with session.post(TOKEN_URL, data=payload) as response:
+            if response.status == 200:
+                data = await response.json()
+                self._token = data.get("access_token")
+                expires_in = data.get("expires_in", 5184000)
+                self._expires_at = time.time() + expires_in
+                return self._token
 
-            self._token = data["access_token"]
-            expires_in = int(data.get("expires_in", 3600))
-            self._expires_at = time.time() + expires_in
+            response_text = await response.text()
+            raise Exception(f"Failed to fetch token: {response.status} - {response_text}")
+
+    async def _get_token(self, session: aiohttp.ClientSession) -> str:
+        current_time = time.time()
+
+        if self._token and current_time < (self._expires_at -300):
             return self._token
-
-    def _invalidate_token(self) -> None:
-        self._token = None
-        self._expires_at = 0.0
+        # Use the App Access Token helper for helix calls
+        return await self._get_app_access_token(session)
 
     async def get_stream(self, session: aiohttp.ClientSession, streamer_login: str) -> dict | None:
         token = await self._get_token(session)
@@ -41,22 +79,8 @@ class TwitchAPI:
 
         async with session.get(HELIX_STREAMS, headers=headers, params=params, timeout=20) as r:
             data = await r.json()
-
-            if r.status == 401:
-                self._invalidate_token()
-                token = await self._get_token(session)
-                headers["Authorization"] = f"Bearer {token}"
-
-                async with session.get(HELIX_STREAMS, headers=headers, params=params, timeout=20) as r2:
-                    data2 = await r2.json()
-                    if r2.status != 200:
-                        raise RuntimeError(f"Twitch helix error {r2.status}: {data2}")
-                    items = data2.get("data", [])
-                    return items[0] if items else None
-
             if r.status != 200:
                 raise RuntimeError(f"Twitch helix error {r.status}: {data}")
-
             items = data.get("data", [])
             return items[0] if items else None
 
@@ -73,24 +97,6 @@ class TwitchAPI:
 
         async with session.get(HELIX_STREAMS, headers=headers, params=params, timeout=20) as r:
             data = await r.json()
-
-            if r.status == 401:
-                self._invalidate_token()
-                token = await self._get_token(session)
-                headers["Authorization"] = f"Bearer {token}"
-
-                async with session.get(HELIX_STREAMS, headers=headers, params=params, timeout=20) as r2:
-                    data2 = await r2.json()
-                    if r2.status != 200:
-                        raise RuntimeError(f"Twitch helix error {r2.status}: {data2}")
-                    items = data2.get("data", [])
-                    out = {}
-                    for it in items:
-                        login = (it.get("user_login") or "").lower()
-                        if login:
-                            out[login] = it
-                    return out
-
             if r.status != 200:
                 raise RuntimeError(f"Twitch helix error {r.status}: {data}")
 
