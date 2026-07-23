@@ -7,6 +7,7 @@ from services.pin_service import PinService
 from services.stream_service import StreamService
 from services.trigger_service import TriggerService
 from services.stream_checker_service import StreamCheckerService
+from utils.permissions import lead_mod_only, mod_only, vip_only, sub_only
 
 
 class StreamCog(commands.Cog):
@@ -70,6 +71,39 @@ class StreamCog(commands.Cog):
             await self.chat_service.send_message(broadcaster_id, "Test was successful 🟢")
         except Exception as e:
             print(f"SEND ERROR: {e}")
+
+
+    @commands.command(name="testlead")
+    @lead_mod_only()
+    async def test_lead_mod(self, ctx):
+        """Tests the Lead Moderator and Streamer permission level."""
+        broadcaster_id = self._get_broadcaster_id_by_username(ctx.channel.name)
+        if broadcaster_id:
+            await self.chat_service.send_message(broadcaster_id, f"@{ctx.author.name} ✅ You are a lead moderator or the streamer!")
+
+    @commands.command(name="testmod")
+    @mod_only()
+    async def test_mod(self, ctx):
+        """Tests the Moderator permission level."""
+        broadcaster_id = self._get_broadcaster_id_by_username(ctx.channel.name)
+        if broadcaster_id:
+            await self.chat_service.send_message(broadcaster_id, f"@{ctx.author.name} ✅ You are a moderator!")
+
+    @commands.command(name="testvip")
+    @vip_only()
+    async def test_vip(self, ctx):
+        """Tests the VIP permission level."""
+        broadcaster_id = self._get_broadcaster_id_by_username(ctx.channel.name)
+        if broadcaster_id:
+            await self.chat_service.send_message(broadcaster_id, f"@{ctx.author.name} ✅ You are a VIP!")
+
+    @commands.command(name="testsub")
+    @sub_only()
+    async def test_sub(self, ctx):
+        """Tests the Subscriber permission level."""
+        broadcaster_id = self._get_broadcaster_id_by_username(ctx.channel.name)
+        if broadcaster_id:
+            await self.chat_service.send_message(broadcaster_id, f"@{ctx.author.name} ✅ You are a subscriber!")
 
 
     @commands.command(name="pin")
