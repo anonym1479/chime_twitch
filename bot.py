@@ -2,69 +2,86 @@ import os
 import json
 import asyncio
 from dotenv import load_dotenv
-from twitchio.ext import commands
-from cogs.stream_cog import StreamCog
+from services.pin_service import PinService
 from services.chat_service import ChatService
-from services.eventsub_service import EventSubService
 from utils.refresh_token import _refresh_token_sync
+from services.trigger_service import TriggerService
+from services.eventsub_service import EventSubService
+from services.stream_checker_service import StreamCheckerService
 
 load_dotenv()
-
-TOKEN = os.getenv("TWITCH_TOKEN")
 
 # Load channels dynamically from config.json
 with open("data/config.json", "r", encoding="utf-8") as f:
     config_data = json.load(f)
-CHANNEL_USERNAMES = [ch["username"] for ch in config_data.get("channels", [])]
-BROADCASTER_IDS = [ch["user_id"] for ch in config_data.get("channels", [])]
+
+CHANNELS_CONFIG = config_data.get("channels", [])
+CHANNEL_USERNAMES = [ch["username"] for ch in CHANNELS_CONFIG]
+BROADCASTER_IDS = [ch["user_id"] for ch in CHANNELS_CONFIG]
 
 
 async def token_refresh_loop():
-    """A background task that refreshes the token every 2 hours while the program is running."""
+    """A background task that refreshes the token every 2 hours."""
     while True:
-        await asyncio.sleep(7200)  # 2 hours
+        await asyncio.sleep(7200)
         print("Running scheduled background Twitch token refresh...")
         await asyncio.to_thread(_refresh_token_sync)
 
 
-class ChimeBot(commands.Bot):
+class ChimeBot:
     def __init__(self):
-        super().__init__(
-            token=TOKEN,
-            prefix="_",
-            initial_channels=CHANNEL_USERNAMES,
-            initial_broadcaster_ids=BROADCASTER_IDS
-        )
+        client_id = os.getenv("TWITCH_CLIENT_ID")
+        client_secret = os.getenv("TWITCH_CLIENT_SECRET")
+        token = os.getenv("TWITCH_TOKEN")
+        bot_id = os.getenv("TWITCH_BOT_ID")
+        bot_username = os.getenv("TWITCH_BOT_USERNAME", "chimebuddy")
 
-        self.chat_service = ChatService(
-            client_id=os.getenv("TWITCH_CLIENT_ID"),
-            bot_user_id=os.getenv("TWITCH_BOT_ID")
+        self.nick = bot_username
+        self.chat_service = ChatService(client_id, bot_id)
+        self.pin_service = PinService(client_id, token, bot_id)
+        self.trigger_service = TriggerService()
+
+        self.stream_checker = StreamCheckerService(
+            self.chat_service,
+            self.pin_service,
+            self.trigger_service,
+            CHANNELS_CONFIG
         )
 
         self.eventsub_service = EventSubService(
-            client_id=os.getenv("TWITCH_CLIENT_ID"),
-            client_secret=os.getenv("TWITCH_CLIENT_SECRET"),
-            broadcaster_id=BROADCASTER_IDS,
-            bot_user_id=os.getenv("TWITCH_BOT_ID"),
-            chat_service=self.chat_service
+            client_id=client_id,
+            client_secret=client_secret,
+            broadcaster_ids=BROADCASTER_IDS,
+            bot_user_id=bot_id,
+            chat_service=self.chat_service,
+            pin_service=self.pin_service,
+            trigger_service=self.trigger_service,
+            channels_config=CHANNELS_CONFIG
         )
 
-    async def event_ready(self):
+    async def start(self):
         print("--------------------------------")
         print(f"Bot online: {self.nick}")
         print(f"Connected channels: {CHANNEL_USERNAMES}")
         print("--------------------------------")
 
-        asyncio.create_task(token_refresh_loop())
+        loop = asyncio.get_running_loop()
+
+        # Start background services
+        loop.create_task(token_refresh_loop())
         print("Token refresh background loop started.")
 
-        asyncio.create_task(self.eventsub_service.start())
-        print("EventSub service started in background.")
+        loop.create_task(self.eventsub_service.start())
+        print("EventSub WebSocket service started in background.")
 
-        self.add_cog(StreamCog(self))
-        print("StreamCog loaded successfully.")
+        loop.create_task(self.stream_checker.start_checking(loop))
+        print("StreamChecker background loop started.")
 
-#   async def event_message(self, message):
+        # Keep application running
+        while True:
+            await asyncio.sleep(3600)
+
+#    async def event_message(self, message):
 #        if message.echo:
 #            return
 #        
@@ -74,9 +91,14 @@ class ChimeBot(commands.Bot):
     async def event_message(self, message):
         if message.echo:
             return
+
         if message.content.startswith("_"):
             print(f"[{message.channel.name}] {message.author.name}: {message.content}")
         await self.handle_commands(message)
 
-
-bot = ChimeBot()
+def run_bot():
+    bot = ChimeBot()
+    try:
+        asyncio.run(bot.start())
+    except KeyboardInterrupt:
+        print("Bot stopped by user.")

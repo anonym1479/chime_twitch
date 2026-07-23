@@ -3,33 +3,20 @@ import json
 import aiohttp
 import asyncio
 import logging
+from services.command_router import CommandRouter
 
 logger = logging.getLogger("ChimeBot.EventSub")
 
 class EventSubService:
-    def __init__(self, client_id: str = None, broadcaster_ids=None, broadcaster_id=None, client_secret: str = None, **kwargs):
-        self.client_id = client_id or os.getenv("TWITCH_CLIENT_ID")
-        self.client_secret = client_secret or os.getenv("TWITCH_CLIENT_SECRET")
-        
-        raw_input = broadcaster_ids if broadcaster_ids is not None else broadcaster_id
-        self.broadcaster_ids = []
-        
-        if raw_input is not None:
-            items = raw_input if isinstance(raw_input, list) else [raw_input]
-            for item in items:
-                if isinstance(item, list):
-                    self.broadcaster_ids.extend([str(sub_item) for sub_item in item])
-                else:
-                    self.broadcaster_ids.append(str(item))
-            
-        self.bot_user_id = os.getenv("TWITCH_BOT_USER_ID") or os.getenv("TWITCH_BOT_ID") or os.getenv("BOT_USER_ID")
+    def __init__(self, client_id: str, client_secret: str, broadcaster_ids: list, bot_user_id: str, chat_service, pin_service, trigger_service, channels_config):
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.broadcaster_ids = broadcaster_ids
+        self.bot_user_id = bot_user_id
         self.websocket_url = "https://eventsub.wss.twitch.tv/ws"
+        self.command_router = CommandRouter(chat_service, pin_service, trigger_service, channels_config)
 
     async def start(self):
-        """
-        Connects to the Twitch EventSub WebSocket server, listens for the welcome message,
-        and manages automatic reconnections.
-        """
         while True:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -55,7 +42,7 @@ class EventSubService:
                                     subscription_type = metadata.get("subscription_type")
                                     if subscription_type == "channel.chat.message":
                                         event_data = data["payload"]["event"]
-                                        logger.debug(f"Chat message event received from {event_data.get('broadcaster_user_login')}")
+                                        await self.command_router.handle_command(event_data)
                                         
                             elif msg.type == aiohttp.WSMsgType.CLOSED:
                                 logger.warning("EventSub WebSocket connection closed.")
@@ -68,9 +55,6 @@ class EventSubService:
                 await asyncio.sleep(5)
 
     async def subscribe_to_chat_messages(self, session_id: str):
-        """
-        Subscribes to channel.chat.message for all configured broadcasters using the bot's User Access Token.
-        """
         raw_token = os.getenv("TWITCH_TOKEN", "")
         token = raw_token.replace("oauth:", "") if raw_token else ""
 

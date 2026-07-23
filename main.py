@@ -8,7 +8,7 @@ _refresh_token_sync()
 
 load_dotenv(override=True)
 
-from bot import bot
+from bot import run_bot
 
 if __name__ == "__main__":
-    bot.run()
+    run_bot()
