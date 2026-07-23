@@ -2,8 +2,8 @@ from services.twitch_api import TwitchAPI
 
 
 class StreamService:
-    def __init__(self, client_id, app_token):
-        self.twitch_api = TwitchAPI(client_id, app_token)
+    def __init__(self, twitch_api):
+        self.twitch_api = twitch_api
 
     async def get_stream_for_broadcaster(self, broadcaster_id):
         """Fetches and returns the current stream information for a specific broadcaster ID if live, otherwise None."""
