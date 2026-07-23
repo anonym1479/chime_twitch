@@ -29,7 +29,7 @@ class StreamCog(commands.Cog):
         bot_id = os.getenv("TWITCH_BOT_ID")
         
         # Initialize services
-        self.chat_service = ChatService(client_id, token, bot_id)
+        self.chat_service = bot.chat_service
         self.pin_service = PinService(client_id, token, bot_id)
         self.trigger_service = TriggerService()
         
