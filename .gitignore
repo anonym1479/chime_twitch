@@ -24,6 +24,7 @@ logs/
 Thumbs.db
 
 # Data
+backups/
 data/project_context.md
 data/triggers.json
 data/config.json
