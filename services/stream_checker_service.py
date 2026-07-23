@@ -32,10 +32,10 @@ class StreamCheckerService:
             json.dump(self.states, f, indent=4)
 
     async def start_checking(self, loop):
-        """Indítja a háttérben futó ciklust, amely 60 másodpercenként ellenőrzi a címeket."""
+        """Starts the background process that checks the titles every 3 minutes."""
         while True:
             await self.check_all_channels()
-            await asyncio.sleep(60)
+            await asyncio.sleep(180)
 
     async def check_all_channels(self):
         usernames = [ch["username"] for ch in self.channels_config]
