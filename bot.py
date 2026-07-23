@@ -33,7 +33,7 @@ class ChimeBot(commands.Bot):
             token=TOKEN,
             prefix="_",
             initial_channels=CHANNEL_USERNAMES,
-            initial_broadcaster_idS=BROADCASTER_IDS
+            initial_broadcaster_ids=BROADCASTER_IDS
         )
 
         self.chat_service = ChatService(

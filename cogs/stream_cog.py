@@ -60,6 +60,7 @@ class StreamCog(commands.Cog):
 # ==========================
 
     @commands.command(name="test")
+    @lead_mod_only()
     async def test(self, ctx):
         """Command visible to users: tests bot responsiveness via Helix API."""
         print(f"TEST COMMAND RAN in {ctx.channel.name}")
@@ -107,6 +108,7 @@ class StreamCog(commands.Cog):
 
 
     @commands.command(name="pin")
+    @mod_only()
     async def pin(self, ctx):
         """Command visible to users: tests manual message pinning in the current channel."""
         print(f"PIN COMMAND RAN in {ctx.channel.name}")
@@ -124,6 +126,7 @@ class StreamCog(commands.Cog):
 
 
     @commands.command(name="checktitle")
+    @lead_mod_only()
     async def checktitle(self, ctx: commands.Context, *, custom_title: str = None):
         """Command visible to users: checks current stream title against channel-specific triggers."""
         channel_name = ctx.channel.name.lower()
@@ -137,7 +140,7 @@ class StreamCog(commands.Cog):
             async with aiohttp.ClientSession() as session:
                 stream = await self.stream_checker.twitch_api.get_stream(session, channel_name)
                 if not stream:
-                    self.chat_service.send_message(broadcaster_id, "Stream is currently offline or not found.")
+                    await self.chat_service.send_message(broadcaster_id, "Stream is currently offline or not found.")
                     return
             custom_title = stream.get("title", "")
 
