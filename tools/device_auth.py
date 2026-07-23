@@ -10,7 +10,7 @@ if not client_id:
     print("Hiba: A TWITCH_CLIENT_ID hiányzik a .env fájrból!")
     exit()
 
-scopes = "chat:read chat:edit user:write:chat channel:moderate moderator:manage:chat_messages"
+scopes = "chat:read chat:edit user:write:chat channel:moderate moderator:manage:chat_messages channel:bot user:read:chat"
 
 # 1. Request a device code from Twitch
 print("Getting code from Twitch...")
@@ -70,12 +70,12 @@ while True:
 
         # Update .env file with correct user token
         env_content = f"""TWITCH_TOKEN=oauth:{access_token}
-                        TWITCH_REFRESH_TOKEN={refresh_token}
-                        TWITCH_CLIENT_ID={client_id}
-                        TWITCH_CLIENT_SECRET={client_secret}
-                        TWITCH_BOT_ID={bot_id}
-                        TWITCH_BOT_USERNAME={bot_username}
-                        """
+        TWITCH_REFRESH_TOKEN={refresh_token}
+        TWITCH_CLIENT_ID={client_id}
+        TWITCH_CLIENT_SECRET={client_secret}
+        TWITCH_BOT_ID={bot_id}
+        TWITCH_BOT_USERNAME={bot_username}
+        """
 
         with open(".env", "w", encoding="utf-8") as f:
             f.write(env_content)
