@@ -5,7 +5,7 @@ class PinService:
 
     def __init__(self, client_id, token, bot_id):
         self.client_id = client_id
-        self.token = token.replace("oauth:", "")
+        self.token = token.replace("oauth:", "") if token else ""
         self.bot_id = bot_id
 
     async def set_pin_status(self, broadcaster_id, message_id, pin_status=True):

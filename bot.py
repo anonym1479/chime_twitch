@@ -81,6 +81,10 @@ class ChimeBot:
         while True:
             await asyncio.sleep(3600)
 
+# --------------------
+# NEEDS TO BE REWRITTEN TO USE THE NEW WEBSOCKET EVENT SUB SERVICE INSTEAD OF THE OLD CHAT SERVICE
+# --------------------
+
 #    async def event_message(self, message):
 #        if message.echo:
 #            return
@@ -88,13 +92,13 @@ class ChimeBot:
 #        print(f"[{message.channel.name}] {message.author.name}: {message.content}")
 #        await self.handle_commands(message)
 
-    async def event_message(self, message):
-        if message.echo:
-            return
-
-        if message.content.startswith("_"):
-            print(f"[{message.channel.name}] {message.author.name}: {message.content}")
-        await self.handle_commands(message)
+#    async def event_message(self, message):
+#        if message.echo:
+#            return
+#
+#        if message.content.startswith("_"):
+#            print(f"[{message.channel.name}] {message.author.name}: {message.content}")
+#        await self.handle_commands(message)
 
 def run_bot():
     bot = ChimeBot()

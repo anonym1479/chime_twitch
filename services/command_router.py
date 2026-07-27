@@ -1,5 +1,7 @@
 import os
+import time
 import aiohttp
+from datetime import datetime, timezone
 
 class CommandRouter:
     def __init__(self, chat_service, pin_service, trigger_service, channels_config):
@@ -135,4 +137,42 @@ class CommandRouter:
                 await self.chat_service.send_message(broadcaster_id, "No trigger found.")
 
         elif cmd in ["online", "jelen"]:
-            await self.chat_service.send_message(broadcaster_id, "Jelen!")
+            await self.chat_service.send_message(broadcaster_id, "I'm here!")
+
+        elif cmd == "uptime":            
+            client_id = os.getenv("TWITCH_CLIENT_ID")
+            client_secret = os.getenv("TWITCH_CLIENT_SECRET")
+            from services.twitch_api import TwitchAPI
+            twitch_api = TwitchAPI(client_id, client_secret)
+
+            async with aiohttp.ClientSession() as session:
+                stream = await twitch_api.get_stream(session, channel_name)
+                if not stream:
+                    await self.chat_service.send_message(broadcaster_id, f"@{chatter_name} 🔴 The stream is currently offline.")
+                    return
+                
+                started_at_str = stream.get("started_at")
+                if not started_at_str:
+                    await self.chat_service.send_message(broadcaster_id, f"@{chatter_name} Could not determine stream start time.")
+                    return
+
+                # Parse Twitch ISO timestamp
+                started_at = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                diff = now - started_at
+
+                hours, remainder = divmod(int(diff.total_seconds()), 3600)
+                minutes, _ = divmod(remainder, 60)
+
+                viewers = stream.get("viewer_count", 0)
+                game_name = stream.get("game_name", "Unknown")
+
+                msg = f"🟢 Live for: {hours} hours and {minutes} minutes | Category: {game_name} | Viewers: {viewers}"
+                await self.chat_service.send_message(broadcaster_id, msg)
+
+        elif cmd == "ping":
+            if not self._is_authorized(event, "mod"):
+                await self.chat_service.send_message(broadcaster_id, f"@{chatter_name} ❌ This command is available only to moderators!")
+                return
+            await self.chat_service.send_message(broadcaster_id, f"@{chatter_name} Pong! 🏓 EventSub WebSockets & Helix API are fully operational.")
+            return

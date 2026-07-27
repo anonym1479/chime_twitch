@@ -1,16 +1,17 @@
 import os
 import time
 import requests
+
 from dotenv import load_dotenv
+from auth.scopes import SCOPES_STRING
 
 load_dotenv()
 
 client_id = os.getenv("TWITCH_CLIENT_ID")
 if not client_id:
-    print("Hiba: A TWITCH_CLIENT_ID hiányzik a .env fájrból!")
+    print("Error: TWITCH CLIENT ID is missing from the .env file!")
     exit()
 
-scopes = "chat:read chat:edit user:write:chat channel:moderate moderator:manage:chat_messages channel:bot user:read:chat"
 
 # 1. Request a device code from Twitch
 print("Getting code from Twitch...")
@@ -18,7 +19,7 @@ res = requests.post(
     "https://id.twitch.tv/oauth2/device",
     data={
         "client_id": client_id,
-        "scopes": scopes
+        "scopes": SCOPES_STRING
     }
 ).json()
 
