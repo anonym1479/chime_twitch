@@ -5,6 +5,13 @@ from chimebuddy.twitch.device_authorization import (
     DeviceAuthorizationExpiredError,
     TwitchDeviceAuthorizationClient,
 )
+from chimebuddy.twitch.helix_gateway import (
+    ChannelInformation,
+    ChatMessageDroppedError,
+    InvalidTwitchResponseError,
+    TwitchAPIError,
+    TwitchHelixGateway,
+)
 from chimebuddy.twitch.oauth_client import (
     InvalidAccessTokenError,
     InvalidRefreshTokenError,
@@ -62,4 +69,9 @@ __all__ = [
     "TwitchStartupError",
     "TwitchTokenManager",
     "check_bot_credential",
+    "ChannelInformation",
+    "ChatMessageDroppedError",
+    "InvalidTwitchResponseError",
+    "TwitchAPIError",
+    "TwitchHelixGateway",
 ]
