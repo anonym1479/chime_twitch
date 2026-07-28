@@ -41,6 +41,11 @@ from chimebuddy.twitch.token_manager import (
     TokenManagerError,
     TwitchTokenManager,
 )
+from chimebuddy.twitch.runtime import (
+    TwitchRuntime,
+    create_twitch_runtime,
+    select_single_bot_credential,
+)
 
 __all__ = [
     "BOT_CHAT_SCOPES",
@@ -74,4 +79,7 @@ __all__ = [
     "InvalidTwitchResponseError",
     "TwitchAPIError",
     "TwitchHelixGateway",
+    "TwitchRuntime",
+    "create_twitch_runtime",
+    "select_single_bot_credential",
 ]
