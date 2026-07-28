@@ -12,8 +12,10 @@ from chimebuddy.database import Database
 from chimebuddy.models import (
     OAuthCredential,
     OAuthCredentialKind,
+    TwitchAccount,
 )
 from chimebuddy.repositories import (
+    IdentityRepository,
     OAuthCredentialRepository,
 )
 from chimebuddy.twitch.device_authorization import (
@@ -42,6 +44,7 @@ async def authorize_bot(settings: Settings) -> None:
     await database.initialize()
 
     repository = OAuthCredentialRepository(database)
+    identity_repository = IdentityRepository(database)
 
     existing_credentials = (
         await repository.list_by_kind(
@@ -197,6 +200,13 @@ async def authorize_bot(settings: Settings) -> None:
         ),
     )
 
+    await identity_repository.save_twitch_account(
+    TwitchAccount(
+        twitch_user_id=validation.user_id,
+        login=validation.login,
+        display_name=validation.login,
+        )
+    )
     await repository.save(credential)
 
     print()
