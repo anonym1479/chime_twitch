@@ -8,6 +8,10 @@ from chimebuddy.config import (
     load_settings,
 )
 from chimebuddy.database import Database
+from chimebuddy.twitch import (
+    TwitchStartupError,
+    check_bot_credential,
+)
 
 
 logger = logging.getLogger("chimebuddy.twitch")
@@ -23,9 +27,30 @@ async def run(settings: Settings) -> None:
             applied_migrations,
         )
     else:
-        logger.info("Database schema is already current.")
+        logger.info(
+            "Database schema is already current."
+        )
 
-    logger.info("Twitch worker scaffold is ready.")
+    health = await check_bot_credential(
+        settings,
+        database,
+    )
+
+    logger.info(
+        "Twitch bot credential is healthy."
+    )
+    logger.info(
+        "Bot Twitch user ID: %s",
+        health.twitch_user_id,
+    )
+    logger.info(
+        "Granted bot scopes: %s",
+        ", ".join(health.scopes),
+    )
+
+    logger.info(
+        "Twitch worker startup health check completed."
+    )
 
 
 def main() -> None:
@@ -35,7 +60,9 @@ def main() -> None:
         settings = load_settings()
         settings.validate_for_twitch()
     except ConfigurationError as exc:
-        raise SystemExit(f"Configuration error: {exc}") from exc
+        raise SystemExit(
+            f"Configuration error: {exc}"
+        ) from exc
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level),
@@ -49,10 +76,21 @@ def main() -> None:
         "Starting ChimeBuddy Twitch worker v%s",
         __version__,
     )
-    logger.info("Environment: %s", settings.environment)
-    logger.info("Database: %s", settings.database_path)
+    logger.info(
+        "Environment: %s",
+        settings.environment,
+    )
+    logger.info(
+        "Database: %s",
+        settings.database_path,
+    )
 
-    asyncio.run(run(settings))
+    try:
+        asyncio.run(run(settings))
+    except TwitchStartupError as exc:
+        raise SystemExit(
+            f"Twitch startup error: {exc}"
+        ) from exc
 
 
 if __name__ == "__main__":
