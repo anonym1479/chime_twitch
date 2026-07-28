@@ -1,5 +1,10 @@
-import aiohttp
 import os
+import token
+import aiohttp
+
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 class ChatService:
     def __init__(self, client_id: str, bot_user_id: str):
@@ -10,7 +15,7 @@ class ChatService:
         """Sends a chat message via Twitch Helix API using the bot's User Access Token."""
         try:
             raw_token = os.getenv("TWITCH_TOKEN", "")
-            token = raw_token.replace("oauth:", "") if raw_token else ""
+            token = raw_token.replace("oauth:", "") if raw_token else ""            
             
             if not token:
                 print("❌ Error: TWITCH_TOKEN is missing or empty for sending chat message!")

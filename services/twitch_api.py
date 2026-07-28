@@ -5,41 +5,6 @@ import aiohttp
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 HELIX_STREAMS = "https://api.twitch.tv/helix/streams"
 
-# Module-level cache variables for App Access Tokens
-_app_access_token = None
-_token_expires_at = 0
-
-# def get_app_access_token() -> str:
-#     """
-#     Fetches or returns a cached App Access Token using Client Credentials grant.
-#     App Access Tokens last ~60 days and do not use refresh tokens.
-#     """
-#     global _app_access_token, _token_expires_at
-#     current_time = time.time()
-#     
-#     if _app_access_token and current_time < (_token_expires_at - 300):
-#         return _app_access_token
-#         
-#     client_id = os.getenv("TWITCH_CLIENT_ID")
-#     client_secret = os.getenv("TWITCH_CLIENT_SECRET")
-#     
-#     payload = {
-#         "client_id": client_id,
-#         "client_secret": client_secret,
-#         "grant_type": "client_credentials"
-#     }
-#     
-#     import requests
-#     response = requests.post(TOKEN_URL, data=payload)
-#     if response.status_code == 200:
-#         data = response.json()
-#         _app_access_token = data.get("access_token")
-#         expires_in = data.get("expires_in", 5184000)
-#         _token_expires_at = current_time + expires_in
-#         return _app_access_token
-#     else:
-#         raise Exception(f"Failed to obtain App Access Token: {response.status_code} - {response.text}")
-
 class TwitchAPI:
     def __init__(self, client_id: str, client_secret: str):
         self.client_id = client_id

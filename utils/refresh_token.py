@@ -29,7 +29,6 @@ def _refresh_token_sync():
 
             set_key(".env", "TWITCH_TOKEN", f"oauth:{new_access}")
             set_key(".env", "TWITCH_REFRESH_TOKEN", new_refresh)
-            print("[SUCCESS] Twitch token updated successfully!")
             return True
         else:
             print(f"[WARNING] Failed to refresh token: {response.text}")

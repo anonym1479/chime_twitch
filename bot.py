@@ -23,22 +23,23 @@ BROADCASTER_IDS = [ch["user_id"] for ch in CHANNELS_CONFIG]
 async def token_refresh_loop():
     """A background task that refreshes the token every 2 hours."""
     while True:
-        await asyncio.sleep(7200)
+        await asyncio.sleep(7200) # 7200 seconds = 2 hours
         print("Running scheduled background Twitch token refresh...")
         await asyncio.to_thread(_refresh_token_sync)
+        load_dotenv(override=True)
+        print("Environment reloaded.")
 
 
 class ChimeBot:
     def __init__(self):
         client_id = os.getenv("TWITCH_CLIENT_ID")
         client_secret = os.getenv("TWITCH_CLIENT_SECRET")
-        token = os.getenv("TWITCH_TOKEN")
         bot_id = os.getenv("TWITCH_BOT_ID")
         bot_username = os.getenv("TWITCH_BOT_USERNAME", "chimebuddy")
 
         self.nick = bot_username
         self.chat_service = ChatService(client_id, bot_id)
-        self.pin_service = PinService(client_id, token, bot_id)
+        self.pin_service = PinService(client_id, bot_id)
         self.trigger_service = TriggerService()
 
         self.stream_checker = StreamCheckerService(

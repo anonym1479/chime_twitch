@@ -50,7 +50,7 @@ class CommandRouter:
 
     async def handle_command(self, event: dict):
         message_text = event.get("message", {}).get("text", "")
-        if not message_text.startswith("_"):
+        if not message_text.startswith("_", "!"):
             return
 
         channel_name = event.get("broadcaster_user_login", "").lower()

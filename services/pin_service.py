@@ -1,19 +1,23 @@
+import os
 import aiohttp
 
 
 class PinService:
 
-    def __init__(self, client_id, token, bot_id):
+    def __init__(self, client_id, bot_id):
         self.client_id = client_id
-        self.token = token.replace("oauth:", "") if token else ""
         self.bot_id = bot_id
 
     async def set_pin_status(self, broadcaster_id, message_id, pin_status=True):
         """Sets or unsets the pin status of a message using async aiohttp."""
+
+        raw_token = os.getenv("TWITCH_TOKEN", "")
+        token = raw_token.replace("oauth:", "") if raw_token else ""
+
         url = "https://api.twitch.tv/helix/chat/pins"
         headers = {
             "Client-ID": self.client_id,
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
         body = {
