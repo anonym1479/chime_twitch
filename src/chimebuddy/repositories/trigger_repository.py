@@ -237,6 +237,252 @@ class TriggerRepository:
             last_error=row["last_error"],
         )
 
+    async def claim_activation(
+        self,
+        trigger_id: int,
+        title: str,
+    ) -> bool:
+        """
+        Atomically change an inactive trigger to activating.
+
+        Only one simultaneous caller can succeed.
+        """
+
+        cleaned_title = str(title).strip()
+
+        if not cleaned_title:
+            raise ValueError(
+                "The matched stream title cannot be empty."
+            )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE trigger_runtime_state
+                SET
+                    status = 'activating',
+                    last_title = ?,
+                    operation_started_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP,
+                    last_error = NULL
+                WHERE trigger_id = ?
+                  AND status = 'inactive'
+                """,
+                (
+                    cleaned_title,
+                    trigger_id,
+                ),
+            )
+
+            claimed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return claimed
+
+    async def complete_activation(
+        self,
+        trigger_id: int,
+        message_id: str,
+        *,
+        is_pinned: bool,
+    ) -> bool:
+        """Record a successfully sent trigger message."""
+
+        cleaned_message_id = str(message_id).strip()
+
+        if not cleaned_message_id:
+            raise ValueError(
+                "message_id cannot be empty."
+            )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE trigger_runtime_state
+                SET
+                    status = 'active',
+                    message_id = ?,
+                    is_pinned = ?,
+                    activated_at = CURRENT_TIMESTAMP,
+                    operation_started_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    last_error = NULL
+                WHERE trigger_id = ?
+                  AND status = 'activating'
+                """,
+                (
+                    cleaned_message_id,
+                    int(is_pinned),
+                    trigger_id,
+                ),
+            )
+
+            completed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return completed
+
+    async def claim_deactivation(
+        self,
+        trigger_id: int,
+    ) -> bool:
+        """
+        Atomically claim cleanup of an active or failed trigger.
+        """
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE trigger_runtime_state
+                SET
+                    status = 'deactivating',
+                    operation_started_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE trigger_id = ?
+                  AND status IN ('active', 'error')
+                """,
+                (trigger_id,),
+            )
+
+            claimed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return claimed
+
+    async def complete_deactivation(
+        self,
+        trigger_id: int,
+    ) -> bool:
+        """Return a cleaned-up trigger to its inactive state."""
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE trigger_runtime_state
+                SET
+                    status = 'inactive',
+                    last_title = NULL,
+                    message_id = NULL,
+                    is_pinned = 0,
+                    activated_at = NULL,
+                    operation_started_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    last_error = NULL
+                WHERE trigger_id = ?
+                  AND status = 'deactivating'
+                """,
+                (trigger_id,),
+            )
+
+            completed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return completed
+
+    async def mark_operation_error(
+        self,
+        trigger_id: int,
+        error_message: str,
+        *,
+        message_id: str | None = None,
+        is_pinned: bool | None = None,
+    ) -> bool:
+        """Record a sanitized trigger-operation error."""
+
+        cleaned_error = (
+            str(error_message).strip()
+            or "Unknown trigger operation error."
+        )
+
+        # Prevent unexpectedly large database entries.
+        cleaned_error = cleaned_error[:1000]
+
+        cleaned_message_id = (
+            str(message_id).strip()
+            if message_id is not None
+            else None
+        )
+
+        pinned_value = (
+            int(is_pinned)
+            if is_pinned is not None
+            else None
+        )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE trigger_runtime_state
+                SET
+                    status = 'error',
+                    message_id = CASE
+                        WHEN ? IS NULL
+                        THEN message_id
+                        ELSE ?
+                    END,
+                    is_pinned = CASE
+                        WHEN ? IS NULL
+                        THEN is_pinned
+                        ELSE ?
+                    END,
+                    operation_started_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    last_error = ?
+                WHERE trigger_id = ?
+                """,
+                (
+                    cleaned_message_id,
+                    cleaned_message_id,
+                    pinned_value,
+                    pinned_value,
+                    cleaned_error,
+                    trigger_id,
+                ),
+            )
+
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return changed
+
+    async def reset_error(
+        self,
+        trigger_id: int,
+    ) -> bool:
+        """
+        Reset an error only when no sent message needs cleanup.
+        """
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE trigger_runtime_state
+                SET
+                    status = 'inactive',
+                    last_title = NULL,
+                    is_pinned = 0,
+                    activated_at = NULL,
+                    operation_started_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    last_error = NULL
+                WHERE trigger_id = ?
+                  AND status = 'error'
+                  AND message_id IS NULL
+                """,
+                (trigger_id,),
+            )
+
+            reset = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return reset
+
     @staticmethod
     def _trigger_from_row(row) -> Trigger:
         return Trigger(
