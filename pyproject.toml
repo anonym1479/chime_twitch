@@ -18,6 +18,7 @@ chimebuddy-twitch = "chimebuddy.twitch_app:main"
 chimebuddy-discord = "chimebuddy.discord_app:main"
 chimebuddy-authorize-bot = "chimebuddy.tools.authorize_bot:main"
 chimebuddy-authorize-broadcaster = "chimebuddy.tools.authorize_broadcaster:main"
+chimebuddy-bootstrap-test-channel = "chimebuddy.tools.bootstrap_test_channel:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

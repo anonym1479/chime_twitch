@@ -23,7 +23,10 @@ from chimebuddy.twitch.oauth_client import (
     TwitchOAuthClient,
     TwitchOAuthError,
 )
-from chimebuddy.twitch.scopes import BOT_CHAT_SCOPES
+from chimebuddy.twitch.scopes import (
+    BOT_CHAT_SCOPES,
+    BROADCASTER_CHAT_SCOPES,
+)
 from chimebuddy.twitch.token_manager import (
     TokenManagerError,
     TwitchTokenManager,
@@ -140,7 +143,12 @@ async def create_twitch_runtime(
     )
 
     bot_credential = select_single_bot_credential(
-        credentials
+            credentials
+        )
+    broadcaster_credentials = (
+        await credential_repository.list_by_kind(
+            OAuthCredentialKind.BROADCASTER
+        )
     )
 
     session = aiohttp.ClientSession()
@@ -166,6 +174,12 @@ async def create_twitch_runtime(
             OAuthCredentialKind.BOT,
             BOT_CHAT_SCOPES,
         )
+        for credential in broadcaster_credentials:
+            token_manager.register(
+                credential.twitch_user_id,
+                OAuthCredentialKind.BROADCASTER,
+                BROADCASTER_CHAT_SCOPES,
+            )
 
         helix_gateway = TwitchHelixGateway(
             session=session,
@@ -190,7 +204,7 @@ async def create_twitch_runtime(
         )
 
         try:
-            await runtime.validate_bot_token()
+            await token_manager.validate_registered()
         except (
             TokenManagerError,
             TwitchOAuthError,
