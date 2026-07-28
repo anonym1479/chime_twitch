@@ -25,6 +25,11 @@ from chimebuddy.services.trigger_state_machine import (
 from chimebuddy.twitch.eventsub_websocket import (
     EventSubWebSocketService,
 )
+from chimebuddy.services.twitch_command_router import (
+    TwitchCommandContext,
+    TwitchCommandPermission,
+    TwitchCommandRouter,
+)
 from chimebuddy.twitch.runtime import TwitchRuntime
 
 
@@ -38,27 +43,24 @@ class TwitchWorkerError(RuntimeError):
     """Raised when a background worker service fails."""
 
 
-class LoggingChatMessageHandler:
-    """
-    Temporary safe handler for received chat messages.
-
-    It proves EventSub reception works. The command router
-    will replace this handler in the next development phase.
-    """
+class RoutedChatMessageHandler:
+    """Logs chat messages and routes Twitch commands."""
 
     def __init__(
         self,
         bot_twitch_user_id: str,
+        command_router: TwitchCommandRouter,
     ) -> None:
         self.bot_twitch_user_id = str(
             bot_twitch_user_id
         ).strip()
+        self.command_router = command_router
 
     async def handle_chat_message(
         self,
         message: TwitchChatMessage,
     ) -> None:
-        # Ignore messages sent by ChimeBuddy itself.
+        # Prevent ChimeBuddy from handling its own replies.
         if (
             message.chatter_twitch_user_id
             == self.bot_twitch_user_id
@@ -81,6 +83,8 @@ class LoggingChatMessageHandler:
             message.text,
         )
 
+        await self.command_router.route(message)
+
     @staticmethod
     def _role_for(
         message: TwitchChatMessage,
@@ -95,6 +99,28 @@ class LoggingChatMessageHandler:
             return "vip"
 
         return "viewer"
+
+
+def create_command_router(
+    runtime: TwitchRuntime,
+) -> TwitchCommandRouter:
+    router = TwitchCommandRouter(prefix="_")
+
+    async def handle_v2ping(
+        context: TwitchCommandContext,
+    ) -> None:
+        await runtime.helix_gateway.send_message(
+            context.message.broadcaster_twitch_user_id,
+            "ChimeBuddy V2 is online.",
+        )
+
+    router.register(
+        "v2ping",
+        TwitchCommandPermission.BROADCASTER,
+        handle_v2ping,
+    )
+
+    return router
 
 
 def create_title_monitor(
@@ -161,8 +187,9 @@ async def create_eventsub_service(
             broadcaster_ids
         ),
         chat_message_handler=(
-            LoggingChatMessageHandler(
-                runtime.bot_twitch_user_id
+            RoutedChatMessageHandler(
+                runtime.bot_twitch_user_id,
+                create_command_router(runtime),
             )
         ),
     )
