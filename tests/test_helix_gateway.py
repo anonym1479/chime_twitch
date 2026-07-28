@@ -288,6 +288,70 @@ class TwitchHelixGatewayTests(
             "message-123",
         )
 
+    async def test_gets_live_stream_title(self):
+        gateway = self.create_gateway(
+            [
+                FakeResponse(
+                    200,
+                    {
+                        "data": [
+                            {
+                                "user_id": BROADCASTER_ID,
+                                "user_login": (
+                                    "example_streamer"
+                                ),
+                                "user_name": (
+                                    "Example Streamer"
+                                ),
+                                "title": (
+                                    "Ranked solo gameplay"
+                                ),
+                                "game_id": "123",
+                                "game_name": (
+                                    "Example Game"
+                                ),
+                                "started_at": (
+                                    "2026-07-28T10:00:00Z"
+                                ),
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+        stream = (
+            await gateway.get_stream_information(
+                BROADCASTER_ID
+            )
+        )
+
+        self.assertIsNotNone(stream)
+        self.assertEqual(
+            stream.title,
+            "Ranked solo gameplay",
+        )
+
+    async def test_offline_stream_returns_none(self):
+        gateway = self.create_gateway(
+            [
+                FakeResponse(
+                    200,
+                    {
+                        "data": [],
+                    },
+                )
+            ]
+        )
+
+        stream = (
+            await gateway.get_stream_information(
+                BROADCASTER_ID
+            )
+        )
+
+        self.assertIsNone(stream)
+
 
 if __name__ == "__main__":
     unittest.main()

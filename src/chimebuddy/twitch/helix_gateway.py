@@ -50,6 +50,16 @@ class ChannelInformation:
     game_id: str
     game_name: str
 
+@dataclass(frozen=True, slots=True)
+class StreamInformation:
+    broadcaster_twitch_user_id: str
+    login: str
+    display_name: str
+    title: str
+    game_id: str
+    game_name: str
+    started_at: str
+
 
 class TwitchHelixGateway:
     """
@@ -130,6 +140,66 @@ class TwitchHelixGateway:
             ),
             game_name=str(
                 item.get("game_name", "")
+            ),
+        )
+
+    async def get_stream_information(
+        self,
+        broadcaster_twitch_user_id: str,
+    ) -> StreamInformation | None:
+        """
+        Return the active stream or None when offline.
+        """
+
+        broadcaster_id = self._required_text(
+            broadcaster_twitch_user_id,
+            "broadcaster_twitch_user_id",
+        )
+
+        status, data = await self._request(
+            "GET",
+            "/streams",
+            params={
+                "user_id": broadcaster_id,
+            },
+            required_scopes=(),
+        )
+
+        if status != 200:
+            self._raise_api_error(status, data)
+
+        items = self._data_list(data)
+
+        if not items:
+            return None
+
+        item = items[0]
+
+        return StreamInformation(
+            broadcaster_twitch_user_id=(
+                self._required_response_text(
+                    item,
+                    "user_id",
+                )
+            ),
+            login=self._required_response_text(
+                item,
+                "user_login",
+            ),
+            display_name=(
+                self._required_response_text(
+                    item,
+                    "user_name",
+                )
+            ),
+            title=str(item.get("title", "")),
+            game_id=str(item.get("game_id", "")),
+            game_name=str(
+                item.get("game_name", "")
+            ),
+            started_at=self._required_response_text(
+                item,
+                "started_at",
             ),
         )
 

@@ -13,6 +13,11 @@ from chimebuddy.services.trigger_state_machine import (
     TriggerDecision,
     TriggerStateMachine,
 )
+from chimebuddy.services.stream_title_monitor import (
+    BroadcasterTitleCheck,
+    StreamTitleMonitor,
+    TitleMonitorReport,
+)
 
 __all__ = [
     "ChatGateway",
@@ -24,4 +29,7 @@ __all__ = [
     "TriggerEvaluation",
     "TriggerRunReport",
     "TriggerStateMachine",
+    "BroadcasterTitleCheck",
+    "StreamTitleMonitor",
+    "TitleMonitorReport",
 ]

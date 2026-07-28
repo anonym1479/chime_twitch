@@ -11,6 +11,7 @@ from chimebuddy.twitch.helix_gateway import (
     InvalidTwitchResponseError,
     TwitchAPIError,
     TwitchHelixGateway,
+    StreamInformation
 )
 from chimebuddy.twitch.oauth_client import (
     InvalidAccessTokenError,
@@ -82,4 +83,5 @@ __all__ = [
     "TwitchRuntime",
     "create_twitch_runtime",
     "select_single_bot_credential",
+    "StreamInformation",
 ]
