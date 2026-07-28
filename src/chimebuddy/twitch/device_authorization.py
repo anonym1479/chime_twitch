@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+import asyncio
 import aiohttp
 
 from chimebuddy.twitch.oauth_client import (
@@ -292,3 +293,34 @@ class TwitchDeviceAuthorizationClient:
             "Twitch device authorization failed "
             f"({status}): {message}"
         )
+
+async def wait_for_device_authorization(
+    device_client: TwitchDeviceAuthorizationClient,
+    authorization: DeviceAuthorization,
+    scopes: tuple[str, ...],
+) -> RefreshedTokens:
+    """Poll Twitch until authorization finishes."""
+
+    event_loop = asyncio.get_running_loop()
+
+    deadline = (
+        event_loop.time()
+        + authorization.expires_in
+    )
+
+    while event_loop.time() < deadline:
+        await asyncio.sleep(
+            authorization.interval
+        )
+
+        tokens = await device_client.poll(
+            authorization,
+            scopes,
+        )
+
+        if tokens is not None:
+            return tokens
+
+    raise DeviceAuthorizationExpiredError(
+        "The Twitch device authorization expired."
+    )

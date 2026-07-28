@@ -4,6 +4,7 @@ from chimebuddy.twitch.device_authorization import (
     DeviceAuthorizationError,
     DeviceAuthorizationExpiredError,
     TwitchDeviceAuthorizationClient,
+    wait_for_device_authorization,
 )
 from chimebuddy.twitch.helix_gateway import (
     ChannelInformation,
@@ -84,4 +85,5 @@ __all__ = [
     "create_twitch_runtime",
     "select_single_bot_credential",
     "StreamInformation",
+    "wait_for_device_authorization"
 ]

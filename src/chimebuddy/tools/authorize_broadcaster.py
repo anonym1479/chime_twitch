@@ -25,12 +25,64 @@ from chimebuddy.twitch.device_authorization import (
 )
 from chimebuddy.twitch.oauth_client import (
     OAuthResponseError,
+    RefreshedTokens,
+    TokenValidation,
     TwitchOAuthClient,
 )
-from chimebuddy.twitch.scopes import BOT_CHAT_SCOPES
+from chimebuddy.twitch.scopes import (
+    BROADCASTER_CHAT_SCOPES,
+)
 
 
-async def authorize_bot(settings: Settings) -> None:
+async def save_broadcaster_authorization(
+    identity_repository: IdentityRepository,
+    credential_repository: OAuthCredentialRepository,
+    validation: TokenValidation,
+    tokens: RefreshedTokens,
+) -> None:
+    """
+    Save identity before credential to satisfy the
+    database foreign-key relationship.
+    """
+
+    if not validation.user_id:
+        raise RuntimeError(
+            "Twitch did not return a broadcaster user ID."
+        )
+
+    if not validation.login:
+        raise RuntimeError(
+            "Twitch did not return a broadcaster login."
+        )
+
+    await identity_repository.save_twitch_account(
+        TwitchAccount(
+            twitch_user_id=validation.user_id,
+            login=validation.login,
+            display_name=validation.login,
+        )
+    )
+
+    await credential_repository.save(
+        OAuthCredential(
+            twitch_user_id=validation.user_id,
+            credential_kind=(
+                OAuthCredentialKind.BROADCASTER
+            ),
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            scopes=validation.scopes,
+            expires_at=(
+                int(time.time())
+                + validation.expires_in
+            ),
+        )
+    )
+
+
+async def authorize_broadcaster(
+    settings: Settings,
+) -> None:
     if not settings.twitch_client_id:
         raise ConfigurationError(
             "TWITCH_CLIENT_ID is missing."
@@ -44,13 +96,11 @@ async def authorize_bot(settings: Settings) -> None:
     database = Database(settings.database_path)
     await database.initialize()
 
-    repository = OAuthCredentialRepository(database)
-    identity_repository = IdentityRepository(database)
-
-    existing_credentials = (
-        await repository.list_by_kind(
-            OAuthCredentialKind.BOT
-        )
+    identity_repository = IdentityRepository(
+        database
+    )
+    credential_repository = (
+        OAuthCredentialRepository(database)
     )
 
     async with aiohttp.ClientSession() as session:
@@ -62,12 +112,14 @@ async def authorize_bot(settings: Settings) -> None:
         )
 
         authorization = await device_client.start(
-            BOT_CHAT_SCOPES
+            BROADCASTER_CHAT_SCOPES
         )
 
         print()
         print("=" * 60)
-        print("CHIMEBUDDY V2 - TWITCH BOT AUTHORIZATION")
+        print(
+            "CHIMEBUDDY V2 - BROADCASTER AUTHORIZATION"
+        )
         print("=" * 60)
         print()
         print("1. Open this address:")
@@ -79,12 +131,13 @@ async def authorize_bot(settings: Settings) -> None:
         print(f"   {authorization.user_code}")
         print()
         print(
-            "3. Sign in using the Twitch BOT account."
+            "3. Sign in using the BROADCASTER "
+            "account, not the bot account."
         )
         print()
         print("Requested permissions:")
 
-        for scope in BOT_CHAT_SCOPES:
+        for scope in BROADCASTER_CHAT_SCOPES:
             print(f"   - {scope}")
 
         print()
@@ -97,13 +150,15 @@ async def authorize_bot(settings: Settings) -> None:
         tokens = await wait_for_device_authorization(
             device_client,
             authorization,
-            BOT_CHAT_SCOPES,
+            BROADCASTER_CHAT_SCOPES,
         )
 
         oauth_client = TwitchOAuthClient(
             session=session,
             client_id=settings.twitch_client_id,
-            client_secret=settings.twitch_client_secret,
+            client_secret=(
+                settings.twitch_client_secret
+            ),
         )
 
         validation = await oauth_client.validate(
@@ -118,8 +173,7 @@ async def authorize_bot(settings: Settings) -> None:
 
     if not validation.user_id:
         raise RuntimeError(
-            "Twitch did not return a user ID. "
-            "A user access token is required."
+            "Twitch did not return a user ID."
         )
 
     if not validation.login:
@@ -128,7 +182,7 @@ async def authorize_bot(settings: Settings) -> None:
         )
 
     missing_scopes = (
-        set(BOT_CHAT_SCOPES)
+        set(BROADCASTER_CHAT_SCOPES)
         - set(validation.scopes)
     )
 
@@ -138,34 +192,13 @@ async def authorize_bot(settings: Settings) -> None:
         )
 
         raise RuntimeError(
-            "The authorized token is missing scopes: "
+            "The broadcaster token is missing scopes: "
             f"{scopes_text}"
-        )
-
-    conflicting_credentials = [
-        credential
-        for credential in existing_credentials
-        if (
-            credential.twitch_user_id
-            != validation.user_id
-        )
-    ]
-
-    if conflicting_credentials:
-        existing_ids = ", ".join(
-            credential.twitch_user_id
-            for credential in conflicting_credentials
-        )
-
-        raise RuntimeError(
-            "The database already contains another "
-            "bot identity: "
-            f"{existing_ids}. It was not overwritten."
         )
 
     print()
     print(
-        "Twitch account authorized successfully:"
+        "Broadcaster authorized successfully:"
     )
     print(f"  Login: {validation.login}")
     print(f"  User ID: {validation.user_id}")
@@ -177,7 +210,7 @@ async def authorize_bot(settings: Settings) -> None:
 
     answer = await asyncio.to_thread(
         input,
-        "Save this account as ChimeBuddy's bot? "
+        "Save this broadcaster authorization? "
         "[y/N]: ",
     )
 
@@ -186,37 +219,23 @@ async def authorize_bot(settings: Settings) -> None:
         "yes",
     }:
         print(
-            "Authorization was not saved."
+            "Broadcaster authorization was not saved."
         )
         return
 
-    credential = OAuthCredential(
-        twitch_user_id=validation.user_id,
-        credential_kind=OAuthCredentialKind.BOT,
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        scopes=validation.scopes,
-        expires_at=(
-            int(time.time())
-            + validation.expires_in
-        ),
+    await save_broadcaster_authorization(
+        identity_repository,
+        credential_repository,
+        validation,
+        tokens,
     )
-
-    await identity_repository.save_twitch_account(
-    TwitchAccount(
-        twitch_user_id=validation.user_id,
-        login=validation.login,
-        display_name=validation.login,
-        )
-    )
-    await repository.save(credential)
 
     print()
     print(
-        "Bot credential saved securely in SQLite."
+        "Broadcaster credential saved in SQLite."
     )
     print(
-        f"Database: {settings.database_path}"
+        "The channel is not enabled yet."
     )
 
 
@@ -225,7 +244,9 @@ def main() -> None:
         settings = load_settings()
         settings.validate_for_twitch()
 
-        asyncio.run(authorize_bot(settings))
+        asyncio.run(
+            authorize_broadcaster(settings)
+        )
 
     except KeyboardInterrupt:
         raise SystemExit(
