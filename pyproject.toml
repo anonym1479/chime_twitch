@@ -8,6 +8,7 @@ version = "2.0.0.dev0"
 description = "Modular Twitch automation bot with a private Discord administration interface"
 requires-python = ">=3.12"
 dependencies = [
+    "aiohttp>=3.10,<4.0",
     "aiosqlite>=0.20,<1.0",
     "python-dotenv>=1.0,<2.0",
 ]
