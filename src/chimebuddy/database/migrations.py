@@ -186,4 +186,45 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=4,
+        name="create_oauth_credentials",
+        statements=(
+            """
+            CREATE TABLE oauth_credentials (
+                twitch_user_id TEXT NOT NULL,
+                credential_kind TEXT NOT NULL,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                scopes_json TEXT NOT NULL DEFAULT '[]',
+                expires_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (
+                    twitch_user_id,
+                    credential_kind
+                ),
+
+                FOREIGN KEY (twitch_user_id)
+                    REFERENCES twitch_accounts(twitch_user_id)
+                    ON DELETE CASCADE,
+
+                CHECK (
+                    credential_kind IN (
+                        'bot',
+                        'broadcaster'
+                    )
+                ),
+                CHECK (length(trim(access_token)) > 0),
+                CHECK (length(trim(refresh_token)) > 0),
+                CHECK (expires_at > 0)
+            )
+            """,
+            """
+            CREATE INDEX oauth_credentials_kind_idx
+            ON oauth_credentials(credential_kind)
+            """,
+        ),
+    ),
 )

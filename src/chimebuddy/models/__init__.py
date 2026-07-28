@@ -6,6 +6,10 @@ from chimebuddy.models.identity import (
     DiscordAccount,
     TwitchAccount,
 )
+from chimebuddy.models.oauth import (
+    OAuthCredential,
+    OAuthCredentialKind,
+)
 from chimebuddy.models.trigger import (
     Trigger,
     TriggerMatchType,
@@ -20,6 +24,8 @@ __all__ = [
     "Broadcaster",
     "BroadcasterProfile",
     "DiscordAccount",
+    "OAuthCredential",
+    "OAuthCredentialKind",
     "Trigger",
     "TriggerMatchType",
     "TriggerRuntimeState",
