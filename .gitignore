@@ -1,6 +1,9 @@
 # Virtual environment
 .venv/
 
+# V2 runtime data
+var/
+
 # Environment variables
 .env
 
@@ -19,7 +22,6 @@ logs/
 *.log
 
 # Data
-database/
 *.db
 *.db-shm
 *.db-wal
