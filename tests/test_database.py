@@ -14,6 +14,8 @@ EXPECTED_TABLES = {
     "discord_accounts",
     "account_links",
     "broadcasters",
+    "triggers",
+    "trigger_runtime_state",
 }
 
 
@@ -34,7 +36,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         applied_versions = await self.database.initialize()
 
         self.assertTrue(self.database_path.exists())
-        self.assertEqual(applied_versions, [1, 2])
+        self.assertEqual(applied_versions, [1, 2, 3])
 
         async with self.database.connect() as connection:
             cursor = await connection.execute(
@@ -58,7 +60,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         first_result = await self.database.initialize()
         second_result = await self.database.initialize()
 
-        self.assertEqual(first_result, [1, 2])
+        self.assertEqual(first_result, [1, 2, 3])
         self.assertEqual(second_result, [])
 
     async def test_identity_and_broadcaster_relationships(self) -> None:

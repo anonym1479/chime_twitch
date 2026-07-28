@@ -6,6 +6,13 @@ from chimebuddy.models.identity import (
     DiscordAccount,
     TwitchAccount,
 )
+from chimebuddy.models.trigger import (
+    Trigger,
+    TriggerMatchType,
+    TriggerRuntimeState,
+    TriggerRuntimeStatus,
+    TriggerSource,
+)
 
 __all__ = [
     "AccountLink",
@@ -13,5 +20,10 @@ __all__ = [
     "Broadcaster",
     "BroadcasterProfile",
     "DiscordAccount",
+    "Trigger",
+    "TriggerMatchType",
+    "TriggerRuntimeState",
+    "TriggerRuntimeStatus",
+    "TriggerSource",
     "TwitchAccount",
 ]
