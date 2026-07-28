@@ -5,6 +5,7 @@ import logging
 import signal
 
 from chimebuddy.database import Database
+from chimebuddy.models.chat import TwitchChatMessage
 from chimebuddy.repositories import (
     IdentityRepository,
     TriggerRepository,
@@ -21,6 +22,9 @@ from chimebuddy.services.trigger_matcher import (
 from chimebuddy.services.trigger_state_machine import (
     TriggerStateMachine,
 )
+from chimebuddy.twitch.eventsub_websocket import (
+    EventSubWebSocketService,
+)
 from chimebuddy.twitch.runtime import TwitchRuntime
 
 
@@ -32,6 +36,65 @@ TOKEN_VALIDATION_INTERVAL_SECONDS = 3600
 
 class TwitchWorkerError(RuntimeError):
     """Raised when a background worker service fails."""
+
+
+class LoggingChatMessageHandler:
+    """
+    Temporary safe handler for received chat messages.
+
+    It proves EventSub reception works. The command router
+    will replace this handler in the next development phase.
+    """
+
+    def __init__(
+        self,
+        bot_twitch_user_id: str,
+    ) -> None:
+        self.bot_twitch_user_id = str(
+            bot_twitch_user_id
+        ).strip()
+
+    async def handle_chat_message(
+        self,
+        message: TwitchChatMessage,
+    ) -> None:
+        # Ignore messages sent by ChimeBuddy itself.
+        if (
+            message.chatter_twitch_user_id
+            == self.bot_twitch_user_id
+        ):
+            return
+
+        role = self._role_for(message)
+
+        log_method = (
+            logger.info
+            if message.text.lstrip().startswith("_")
+            else logger.debug
+        )
+
+        log_method(
+            "[%s] %s (%s): %s",
+            message.broadcaster_login,
+            message.chatter_login,
+            role,
+            message.text,
+        )
+
+    @staticmethod
+    def _role_for(
+        message: TwitchChatMessage,
+    ) -> str:
+        if message.is_broadcaster:
+            return "broadcaster"
+
+        if message.is_moderator:
+            return "moderator"
+
+        if message.is_vip:
+            return "vip"
+
+        return "viewer"
 
 
 def create_title_monitor(
@@ -55,6 +118,52 @@ def create_title_monitor(
         trigger_coordinator=coordinator,
         poll_interval_seconds=(
             TITLE_POLL_INTERVAL_SECONDS
+        ),
+    )
+
+
+async def create_eventsub_service(
+    database: Database,
+    runtime: TwitchRuntime,
+) -> EventSubWebSocketService | None:
+    identity_repository = IdentityRepository(database)
+
+    broadcasters = (
+        await identity_repository.list_broadcasters(
+            enabled_only=True
+        )
+    )
+
+    broadcaster_ids = tuple(
+        broadcaster.twitch_user_id
+        for broadcaster in broadcasters
+    )
+
+    if not broadcaster_ids:
+        logger.warning(
+            "No enabled broadcasters exist. "
+            "EventSub chat reception will not start."
+        )
+        return None
+
+    logger.info(
+        "Preparing EventSub chat reception for "
+        "%s broadcaster(s).",
+        len(broadcaster_ids),
+    )
+
+    return EventSubWebSocketService(
+        session=runtime.session,
+        subscription_client=(
+            runtime.eventsub_subscription_client
+        ),
+        broadcaster_twitch_user_ids=(
+            broadcaster_ids
+        ),
+        chat_message_handler=(
+            LoggingChatMessageHandler(
+                runtime.bot_twitch_user_id
+            )
         ),
     )
 
@@ -116,6 +225,11 @@ async def run_twitch_worker(
         runtime,
     )
 
+    eventsub_service = await create_eventsub_service(
+        database,
+        runtime,
+    )
+
     tasks = [
         asyncio.create_task(
             title_monitor.run(stop_event),
@@ -129,6 +243,14 @@ async def run_twitch_worker(
             name="token-validation",
         ),
     ]
+
+    if eventsub_service is not None:
+        tasks.append(
+            asyncio.create_task(
+                eventsub_service.run(stop_event),
+                name="eventsub-websocket",
+            )
+        )
 
     for task in tasks:
         task.add_done_callback(

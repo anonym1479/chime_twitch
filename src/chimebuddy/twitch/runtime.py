@@ -16,6 +16,9 @@ from chimebuddy.models import (
 from chimebuddy.repositories import (
     OAuthCredentialRepository,
 )
+from chimebuddy.twitch.eventsub_subscriptions import (
+    EventSubSubscriptionClient,
+)
 from chimebuddy.twitch.helix_gateway import (
     TwitchHelixGateway,
 )
@@ -53,6 +56,9 @@ class TwitchRuntime:
     credential_repository: OAuthCredentialRepository
     oauth_client: TwitchOAuthClient
     token_manager: TwitchTokenManager
+    eventsub_subscription_client: (
+        EventSubSubscriptionClient
+    )
     helix_gateway: TwitchHelixGateway
     bot_twitch_user_id: str
 
@@ -143,8 +149,9 @@ async def create_twitch_runtime(
     )
 
     bot_credential = select_single_bot_credential(
-            credentials
-        )
+        credentials
+    )
+
     broadcaster_credentials = (
         await credential_repository.list_by_kind(
             OAuthCredentialKind.BROADCASTER
@@ -174,12 +181,24 @@ async def create_twitch_runtime(
             OAuthCredentialKind.BOT,
             BOT_CHAT_SCOPES,
         )
+
         for credential in broadcaster_credentials:
             token_manager.register(
                 credential.twitch_user_id,
                 OAuthCredentialKind.BROADCASTER,
                 BROADCASTER_CHAT_SCOPES,
             )
+
+        eventsub_subscription_client = (
+            EventSubSubscriptionClient(
+                session=session,
+                client_id=settings.twitch_client_id,
+                bot_twitch_user_id=(
+                    bot_credential.twitch_user_id
+                ),
+                token_manager=token_manager,
+            )
+        )
 
         helix_gateway = TwitchHelixGateway(
             session=session,
@@ -197,6 +216,9 @@ async def create_twitch_runtime(
             ),
             oauth_client=oauth_client,
             token_manager=token_manager,
+            eventsub_subscription_client=(
+                eventsub_subscription_client
+            ),
             helix_gateway=helix_gateway,
             bot_twitch_user_id=(
                 bot_credential.twitch_user_id
