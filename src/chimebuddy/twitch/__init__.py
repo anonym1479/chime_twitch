@@ -1,3 +1,10 @@
+from chimebuddy.twitch.device_authorization import (
+    DeviceAuthorization,
+    DeviceAuthorizationDeniedError,
+    DeviceAuthorizationError,
+    DeviceAuthorizationExpiredError,
+    TwitchDeviceAuthorizationClient,
+)
 from chimebuddy.twitch.oauth_client import (
     InvalidAccessTokenError,
     InvalidRefreshTokenError,
@@ -34,6 +41,10 @@ __all__ = [
     "BotCredentialHealth",
     "BotCredentialNotFoundError",
     "CredentialNotFoundError",
+    "DeviceAuthorization",
+    "DeviceAuthorizationDeniedError",
+    "DeviceAuthorizationError",
+    "DeviceAuthorizationExpiredError",
     "InvalidAccessTokenError",
     "InvalidRefreshTokenError",
     "MissingScopesError",
@@ -45,6 +56,7 @@ __all__ = [
     "TokenIdentityMismatchError",
     "TokenManagerError",
     "TokenValidation",
+    "TwitchDeviceAuthorizationClient",
     "TwitchOAuthClient",
     "TwitchOAuthError",
     "TwitchStartupError",
