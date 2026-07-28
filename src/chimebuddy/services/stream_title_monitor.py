@@ -196,12 +196,19 @@ class StreamTitleMonitor:
         while not stop_event.is_set():
             report = await self.check_once()
 
-            logger.info(
-                "Title check completed: %s checked, "
-                "%s errors.",
-                report.checked_count,
-                report.error_count,
-            )
+            if report.error_count:
+                logger.warning(
+                    "Title check completed: %s checked, "
+                    "%s errors.",
+                    report.checked_count,
+                    report.error_count,
+                )
+            else:
+                logger.debug(
+                    "Title check completed: %s checked, "
+                    "no errors.",
+                    report.checked_count,
+                )
 
             try:
                 await asyncio.wait_for(

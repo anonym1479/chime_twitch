@@ -8,9 +8,13 @@ from chimebuddy.config import (
     load_settings,
 )
 from chimebuddy.database import Database
-from chimebuddy.twitch import (
+from chimebuddy.twitch.runtime import (
     TwitchStartupError,
-    check_bot_credential,
+    create_twitch_runtime,
+)
+from chimebuddy.twitch.worker import (
+    TwitchWorkerError,
+    run_twitch_worker,
 )
 
 
@@ -31,26 +35,30 @@ async def run(settings: Settings) -> None:
             "Database schema is already current."
         )
 
-    health = await check_bot_credential(
+    async with create_twitch_runtime(
         settings,
         database,
-    )
+    ) as runtime:
+        credential = (
+            await runtime.get_current_bot_credential()
+        )
 
-    logger.info(
-        "Twitch bot credential is healthy."
-    )
-    logger.info(
-        "Bot Twitch user ID: %s",
-        health.twitch_user_id,
-    )
-    logger.info(
-        "Granted bot scopes: %s",
-        ", ".join(health.scopes),
-    )
+        logger.info(
+            "Twitch bot credential is healthy."
+        )
+        logger.info(
+            "Bot Twitch user ID: %s",
+            credential.twitch_user_id,
+        )
+        logger.info(
+            "Granted bot scopes: %s",
+            ", ".join(credential.scopes),
+        )
 
-    logger.info(
-        "Twitch worker startup health check completed."
-    )
+        await run_twitch_worker(
+            database,
+            runtime,
+        )
 
 
 def main() -> None:
@@ -87,9 +95,12 @@ def main() -> None:
 
     try:
         asyncio.run(run(settings))
-    except TwitchStartupError as exc:
+    except (
+        TwitchStartupError,
+        TwitchWorkerError,
+    ) as exc:
         raise SystemExit(
-            f"Twitch startup error: {exc}"
+            f"Twitch worker error: {exc}"
         ) from exc
 
 
