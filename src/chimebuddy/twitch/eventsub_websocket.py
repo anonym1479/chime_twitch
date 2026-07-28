@@ -1,0 +1,641 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from collections import deque
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+import aiohttp
+
+from chimebuddy.models.chat import TwitchChatMessage
+from chimebuddy.twitch.eventsub_messages import (
+    EventSubMessageError,
+    parse_channel_chat_message,
+)
+from chimebuddy.twitch.eventsub_subscriptions import (
+    EventSubSubscriptionClient,
+)
+
+
+logger = logging.getLogger(
+    "chimebuddy.twitch.eventsub"
+)
+
+EVENTSUB_WEBSOCKET_URL = (
+    "wss://eventsub.wss.twitch.tv/ws"
+    "?keepalive_timeout_seconds=30"
+)
+
+CONNECTION_TIMEOUT_SECONDS = 15
+WELCOME_TIMEOUT_SECONDS = 10
+DEFAULT_RECONNECT_DELAY_SECONDS = 5
+MESSAGE_ID_CACHE_SIZE = 1000
+
+
+class EventSubWebSocketError(RuntimeError):
+    """Raised when the EventSub connection fails."""
+
+
+class ChatMessageHandler(Protocol):
+    async def handle_chat_message(
+        self,
+        message: TwitchChatMessage,
+    ) -> None:
+        """Handle one parsed Twitch chat message."""
+
+
+@dataclass(frozen=True, slots=True)
+class EventSubWelcome:
+    session_id: str
+    keepalive_timeout_seconds: int
+
+
+class EventSubWebSocketService:
+    """Maintains Twitch's EventSub WebSocket connection."""
+
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        subscription_client: EventSubSubscriptionClient,
+        broadcaster_twitch_user_ids: tuple[str, ...],
+        chat_message_handler: ChatMessageHandler,
+        *,
+        reconnect_delay_seconds: float = (
+            DEFAULT_RECONNECT_DELAY_SECONDS
+        ),
+    ) -> None:
+        broadcaster_ids = tuple(
+            dict.fromkeys(
+                str(user_id).strip()
+                for user_id in broadcaster_twitch_user_ids
+                if str(user_id).strip()
+            )
+        )
+
+        if not broadcaster_ids:
+            raise ValueError(
+                "At least one broadcaster is required."
+            )
+
+        if reconnect_delay_seconds < 0:
+            raise ValueError(
+                "reconnect_delay_seconds cannot be negative."
+            )
+
+        self.session = session
+        self.subscription_client = subscription_client
+        self.broadcaster_twitch_user_ids = (
+            broadcaster_ids
+        )
+        self.chat_message_handler = chat_message_handler
+        self.reconnect_delay_seconds = (
+            reconnect_delay_seconds
+        )
+
+        self._recent_message_ids: deque[str] = deque()
+        self._recent_message_id_set: set[str] = set()
+
+    async def run(
+        self,
+        stop_event: asyncio.Event,
+    ) -> None:
+        logger.info(
+            "Twitch EventSub WebSocket service started."
+        )
+
+        while not stop_event.is_set():
+            try:
+                await self._run_connection(stop_event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if stop_event.is_set():
+                    break
+
+                logger.exception(
+                    "Twitch EventSub WebSocket "
+                    "connection failed."
+                )
+
+            if stop_event.is_set():
+                break
+
+            logger.info(
+                "Reconnecting to Twitch EventSub in "
+                "%s seconds.",
+                self.reconnect_delay_seconds,
+            )
+
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=self.reconnect_delay_seconds,
+                )
+            except TimeoutError:
+                pass
+
+        logger.info(
+            "Twitch EventSub WebSocket service stopped."
+        )
+
+    async def _run_connection(
+        self,
+        stop_event: asyncio.Event,
+    ) -> None:
+        websocket, welcome = await self._connect(
+            EVENTSUB_WEBSOCKET_URL
+        )
+
+        try:
+            await self._subscribe_all(
+                welcome.session_id
+            )
+
+            logger.info(
+                "Twitch EventSub session %s is ready.",
+                welcome.session_id,
+            )
+
+            while not stop_event.is_set():
+                reconnect_url = (
+                    await self._consume_until_reconnect(
+                        websocket,
+                        welcome.keepalive_timeout_seconds,
+                        stop_event,
+                    )
+                )
+
+                if (
+                    reconnect_url is None
+                    or stop_event.is_set()
+                ):
+                    return
+
+                logger.info(
+                    "Twitch requested an EventSub "
+                    "WebSocket handover."
+                )
+
+                replacement, replacement_welcome = (
+                    await self._connect(reconnect_url)
+                )
+
+                # Twitch transfers the subscriptions to the
+                # replacement connection automatically.
+                await websocket.close()
+
+                websocket = replacement
+                welcome = replacement_welcome
+
+                logger.info(
+                    "Twitch EventSub handover completed. "
+                    "New session: %s",
+                    welcome.session_id,
+                )
+
+        finally:
+            if not websocket.closed:
+                await websocket.close()
+
+    async def _connect(
+        self,
+        url: str,
+    ) -> tuple[
+        aiohttp.ClientWebSocketResponse,
+        EventSubWelcome,
+    ]:
+        logger.info(
+            "Connecting to Twitch EventSub WebSocket."
+        )
+
+        websocket = await asyncio.wait_for(
+            self.session.ws_connect(
+                url,
+                autoping=True,
+            ),
+            timeout=CONNECTION_TIMEOUT_SECONDS,
+        )
+
+        try:
+            message = await asyncio.wait_for(
+                websocket.receive(),
+                timeout=WELCOME_TIMEOUT_SECONDS,
+            )
+
+            envelope = self._decode_message(message)
+
+            if envelope is None:
+                raise EventSubWebSocketError(
+                    "Twitch closed the connection before "
+                    "sending its welcome message."
+                )
+
+            welcome = self._parse_welcome(envelope)
+
+        except Exception:
+            await websocket.close()
+            raise
+
+        logger.info(
+            "Connected to Twitch EventSub WebSocket. "
+            "Session: %s",
+            welcome.session_id,
+        )
+
+        return websocket, welcome
+
+    async def _subscribe_all(
+        self,
+        websocket_session_id: str,
+    ) -> None:
+        results = await asyncio.gather(
+            *(
+                self.subscription_client.subscribe_to_chat(
+                    websocket_session_id,
+                    broadcaster_id,
+                )
+                for broadcaster_id
+                in self.broadcaster_twitch_user_ids
+            ),
+            return_exceptions=True,
+        )
+
+        successful = 0
+
+        for broadcaster_id, result in zip(
+            self.broadcaster_twitch_user_ids,
+            results,
+            strict=True,
+        ):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "Failed to subscribe to chat for "
+                    "broadcaster %s: %s",
+                    broadcaster_id,
+                    result,
+                )
+                continue
+
+            successful += 1
+
+            logger.info(
+                "Subscribed to Twitch chat for "
+                "broadcaster %s.",
+                broadcaster_id,
+            )
+
+        if successful == 0:
+            raise EventSubWebSocketError(
+                "No Twitch chat subscriptions succeeded."
+            )
+
+    async def _consume_until_reconnect(
+        self,
+        websocket: aiohttp.ClientWebSocketResponse,
+        keepalive_timeout_seconds: int,
+        stop_event: asyncio.Event,
+    ) -> str | None:
+        silence_timeout = (
+            keepalive_timeout_seconds + 10
+        )
+
+        while not stop_event.is_set():
+            message = await self._receive_or_stop(
+                websocket,
+                stop_event,
+                silence_timeout,
+            )
+
+            if message is None:
+                return None
+
+            envelope = self._decode_message(message)
+
+            if envelope is None:
+                return None
+
+            metadata = envelope.get("metadata")
+
+            if not isinstance(metadata, Mapping):
+                logger.warning(
+                    "Ignored EventSub message without "
+                    "valid metadata."
+                )
+                continue
+
+            message_type = str(
+                metadata.get("message_type", "")
+            ).strip()
+
+            if message_type == "session_reconnect":
+                return self._parse_reconnect_url(
+                    envelope
+                )
+
+            if message_type == "session_keepalive":
+                continue
+
+            if message_type == "notification":
+                await self._handle_notification(
+                    envelope
+                )
+                continue
+
+            if message_type == "revocation":
+                self._log_revocation(envelope)
+                continue
+
+            logger.debug(
+                "Ignored EventSub message type: %s",
+                message_type or "<missing>",
+            )
+
+        return None
+
+    @staticmethod
+    async def _receive_or_stop(
+        websocket: aiohttp.ClientWebSocketResponse,
+        stop_event: asyncio.Event,
+        timeout: float,
+    ):
+        receive_task = asyncio.create_task(
+            websocket.receive()
+        )
+        stop_task = asyncio.create_task(
+            stop_event.wait()
+        )
+
+        done, pending = await asyncio.wait(
+            {receive_task, stop_task},
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if not done:
+            receive_task.cancel()
+            stop_task.cancel()
+
+            await asyncio.gather(
+                receive_task,
+                stop_task,
+                return_exceptions=True,
+            )
+
+            raise EventSubWebSocketError(
+                "Twitch EventSub keepalive timed out."
+            )
+
+        for task in pending:
+            task.cancel()
+
+        await asyncio.gather(
+            *pending,
+            return_exceptions=True,
+        )
+
+        if stop_task in done:
+            if receive_task in done:
+                await asyncio.gather(
+                    receive_task,
+                    return_exceptions=True,
+                )
+
+            return None
+
+        return receive_task.result()
+
+    async def _handle_notification(
+        self,
+        envelope: Mapping[str, Any],
+    ) -> None:
+        metadata = envelope.get("metadata")
+
+        if not isinstance(metadata, Mapping):
+            return
+
+        subscription_type = str(
+            metadata.get("subscription_type", "")
+        ).strip()
+
+        if subscription_type != "channel.chat.message":
+            return
+
+        event_message_id = str(
+            metadata.get("message_id", "")
+        ).strip()
+
+        if (
+            event_message_id
+            and not self._remember_message_id(
+                event_message_id
+            )
+        ):
+            logger.debug(
+                "Ignored duplicate EventSub message %s.",
+                event_message_id,
+            )
+            return
+
+        try:
+            message = parse_channel_chat_message(
+                envelope
+            )
+        except EventSubMessageError as exc:
+            logger.warning(
+                "Ignored malformed Twitch chat "
+                "notification: %s",
+                exc,
+            )
+            return
+
+        try:
+            await self.chat_message_handler.handle_chat_message(
+                message
+            )
+        except Exception:
+            # One broken command must never destroy the
+            # EventSub connection.
+            logger.exception(
+                "Twitch chat message handling failed "
+                "for message %s.",
+                message.message_id,
+            )
+
+    def _remember_message_id(
+        self,
+        message_id: str,
+    ) -> bool:
+        if message_id in self._recent_message_id_set:
+            return False
+
+        if (
+            len(self._recent_message_ids)
+            >= MESSAGE_ID_CACHE_SIZE
+        ):
+            oldest = self._recent_message_ids.popleft()
+            self._recent_message_id_set.discard(oldest)
+
+        self._recent_message_ids.append(message_id)
+        self._recent_message_id_set.add(message_id)
+
+        return True
+
+    @staticmethod
+    def _decode_message(
+        message,
+    ) -> dict[str, Any] | None:
+        if message.type is aiohttp.WSMsgType.TEXT:
+            try:
+                data = json.loads(message.data)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise EventSubWebSocketError(
+                    "Twitch sent invalid JSON over "
+                    "EventSub."
+                ) from exc
+
+            if not isinstance(data, dict):
+                raise EventSubWebSocketError(
+                    "Twitch sent an invalid EventSub "
+                    "message."
+                )
+
+            return data
+
+        if message.type in {
+            aiohttp.WSMsgType.CLOSE,
+            aiohttp.WSMsgType.CLOSED,
+            aiohttp.WSMsgType.CLOSING,
+        }:
+            return None
+
+        if message.type is aiohttp.WSMsgType.ERROR:
+            raise EventSubWebSocketError(
+                "Twitch EventSub WebSocket reported "
+                f"an error: {message.data}"
+            )
+
+        return {}
+
+    @staticmethod
+    def _parse_welcome(
+        envelope: Mapping[str, Any],
+    ) -> EventSubWelcome:
+        metadata = envelope.get("metadata")
+        payload = envelope.get("payload")
+
+        if (
+            not isinstance(metadata, Mapping)
+            or not isinstance(payload, Mapping)
+            or metadata.get("message_type")
+            != "session_welcome"
+        ):
+            raise EventSubWebSocketError(
+                "The first EventSub message was not "
+                "a welcome message."
+            )
+
+        session = payload.get("session")
+
+        if not isinstance(session, Mapping):
+            raise EventSubWebSocketError(
+                "EventSub welcome message has no session."
+            )
+
+        session_id = str(
+            session.get("id", "")
+        ).strip()
+
+        try:
+            keepalive_timeout = int(
+                session.get(
+                    "keepalive_timeout_seconds"
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise EventSubWebSocketError(
+                "EventSub welcome message has an "
+                "invalid keepalive timeout."
+            ) from exc
+
+        if not session_id:
+            raise EventSubWebSocketError(
+                "EventSub welcome message has no "
+                "session ID."
+            )
+
+        if keepalive_timeout <= 0:
+            raise EventSubWebSocketError(
+                "EventSub keepalive timeout must "
+                "be positive."
+            )
+
+        return EventSubWelcome(
+            session_id=session_id,
+            keepalive_timeout_seconds=(
+                keepalive_timeout
+            ),
+        )
+
+    @staticmethod
+    def _parse_reconnect_url(
+        envelope: Mapping[str, Any],
+    ) -> str:
+        payload = envelope.get("payload")
+
+        if not isinstance(payload, Mapping):
+            raise EventSubWebSocketError(
+                "EventSub reconnect message has "
+                "no payload."
+            )
+
+        session = payload.get("session")
+
+        if not isinstance(session, Mapping):
+            raise EventSubWebSocketError(
+                "EventSub reconnect message has "
+                "no session."
+            )
+
+        reconnect_url = str(
+            session.get("reconnect_url", "")
+        ).strip()
+
+        if not reconnect_url:
+            raise EventSubWebSocketError(
+                "EventSub reconnect message has "
+                "no reconnect URL."
+            )
+
+        return reconnect_url
+
+    @staticmethod
+    def _log_revocation(
+        envelope: Mapping[str, Any],
+    ) -> None:
+        payload = envelope.get("payload")
+
+        if not isinstance(payload, Mapping):
+            logger.error(
+                "Twitch revoked an unknown "
+                "EventSub subscription."
+            )
+            return
+
+        subscription = payload.get("subscription")
+
+        if not isinstance(subscription, Mapping):
+            logger.error(
+                "Twitch revoked an unknown "
+                "EventSub subscription."
+            )
+            return
+
+        logger.error(
+            "Twitch revoked EventSub subscription "
+            "%s: %s",
+            subscription.get("id", "<unknown>"),
+            subscription.get("status", "<unknown>"),
+        )
