@@ -41,6 +41,8 @@ from chimebuddy.twitch.scopes import (
 )
 
 
+CONFIRMATION_WINDOW_SECONDS = 600
+
 AuthorizationWaiter = Callable[
     [
         TwitchDeviceAuthorizationClient,
@@ -53,6 +55,7 @@ AuthorizationWaiter = Callable[
 
 class AccountLinkingError(RuntimeError):
     """Base error for combined account linking."""
+
 
 class ExistingBroadcasterRequestError(
     AccountLinkingError
@@ -70,6 +73,7 @@ class ExistingBroadcasterRequestError(
             f"request {request.request_id} with status "
             f"{request.status.value}."
         )
+
 
 class LinkAuthorizationValidationError(
     AccountLinkingError
@@ -97,6 +101,23 @@ class AccountLinkChallenge:
 
 
 @dataclass(frozen=True, slots=True)
+class AccountLinkAuthorization:
+    """Validated authorization waiting for user confirmation."""
+
+    session_id: str
+    discord_user_id: str
+    twitch_user_id: str
+    twitch_login: str
+    confirmation_expires_at: int
+    twitch_account: TwitchAccount = field(
+        repr=False
+    )
+    credential: OAuthCredential = field(
+        repr=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class AccountLinkResult:
     session_id: str
     discord_user_id: str
@@ -106,7 +127,7 @@ class AccountLinkResult:
 
 
 class AccountLinkingService:
-    """Runs Twitch linking and creates a broadcaster request."""
+    """Authenticates, confirms and links Twitch accounts."""
 
     def __init__(
         self,
@@ -236,12 +257,10 @@ class AccountLinkingService:
             authorization=authorization,
         )
 
-    async def complete(
+    async def authenticate(
         self,
         challenge: AccountLinkChallenge,
-        *,
-        requester_message: str | None = None,
-    ) -> AccountLinkResult:
+    ) -> AccountLinkAuthorization:
         try:
             tokens = await self.authorization_waiter(
                 self.device_client,
@@ -285,6 +304,25 @@ class AccountLinkingService:
                     "request ChimeBuddy access."
                 )
 
+            confirmation_expires_at = (
+                int(time.time())
+                + CONFIRMATION_WINDOW_SECONDS
+            )
+
+            extended = (
+                await self.session_repository
+                .extend_expiry(
+                    challenge.session_id,
+                    confirmation_expires_at,
+                )
+            )
+
+            if not extended:
+                raise LinkSessionCompletionError(
+                    "The account-link session is no "
+                    "longer pending."
+                )
+
             twitch_account = TwitchAccount(
                 twitch_user_id=twitch_user_id,
                 login=twitch_login,
@@ -305,20 +343,19 @@ class AccountLinkingService:
                 ),
             )
 
-            completed = (
-                await self.completion_repository.complete(
-                    challenge.session_id,
-                    twitch_account=twitch_account,
-                    credential=credential,
-                )
+            return AccountLinkAuthorization(
+                session_id=challenge.session_id,
+                discord_user_id=(
+                    challenge.discord_user_id
+                ),
+                twitch_user_id=twitch_user_id,
+                twitch_login=twitch_login,
+                confirmation_expires_at=(
+                    confirmation_expires_at
+                ),
+                twitch_account=twitch_account,
+                credential=credential,
             )
-
-            if not completed:
-                raise LinkSessionCompletionError(
-                    "The account-link session is no "
-                    "longer pending. It may have expired "
-                    "or already been completed."
-                )
 
         except DeviceAuthorizationExpiredError:
             await self.session_repository.expire(
@@ -340,24 +377,90 @@ class AccountLinkingService:
             )
             raise
 
+    async def confirm_and_create_request(
+        self,
+        authorization: AccountLinkAuthorization,
+        *,
+        requester_message: str | None = None,
+    ) -> AccountLinkResult:
+        try:
+            completed = (
+                await self.completion_repository.complete(
+                    authorization.session_id,
+                    twitch_account=(
+                        authorization.twitch_account
+                    ),
+                    credential=(
+                        authorization.credential
+                    ),
+                )
+            )
+
+            if not completed:
+                raise LinkSessionCompletionError(
+                    "The account-link confirmation "
+                    "expired or was already completed."
+                )
+
+        except Exception:
+            await self.session_repository.fail(
+                authorization.session_id,
+                "Account-link confirmation failed.",
+            )
+            raise
+
         request = (
             await self.onboarding_service.create_request(
-                twitch_user_id=twitch_user_id,
+                twitch_user_id=(
+                    authorization.twitch_user_id
+                ),
                 discord_user_id=(
-                    challenge.discord_user_id
+                    authorization.discord_user_id
                 ),
                 requester_message=requester_message,
             )
         )
 
         return AccountLinkResult(
-            session_id=challenge.session_id,
+            session_id=authorization.session_id,
             discord_user_id=(
-                challenge.discord_user_id
+                authorization.discord_user_id
             ),
-            twitch_user_id=twitch_user_id,
-            twitch_login=twitch_login,
+            twitch_user_id=(
+                authorization.twitch_user_id
+            ),
+            twitch_login=authorization.twitch_login,
             request=request,
+        )
+
+    async def cancel_authorization(
+        self,
+        authorization: AccountLinkAuthorization,
+    ) -> bool:
+        return await self.session_repository.cancel(
+            authorization.session_id
+        )
+
+    async def complete(
+        self,
+        challenge: AccountLinkChallenge,
+        *,
+        requester_message: str | None = None,
+    ) -> AccountLinkResult:
+        """
+        Compatibility wrapper used by the current Discord UI.
+
+        This will be removed after the confirmation panel
+        is connected.
+        """
+
+        authorization = await self.authenticate(
+            challenge
+        )
+
+        return await self.confirm_and_create_request(
+            authorization,
+            requester_message=requester_message,
         )
 
     def _validate_authorization(

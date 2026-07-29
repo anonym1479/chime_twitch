@@ -1,10 +1,10 @@
-import time
 import tempfile
 import unittest
 from pathlib import Path
 
 from chimebuddy.database import Database
 from chimebuddy.models import (
+    AccountLinkSessionStatus,
     AccountLinkStatus,
     BroadcasterBlacklistEntry,
     BroadcasterRequestStatus,
@@ -22,8 +22,8 @@ from chimebuddy.repositories import (
 from chimebuddy.services import (
     AccountLinkingService,
     BlacklistedIdentityError,
-    OnboardingService,
     ExistingBroadcasterRequestError,
+    OnboardingService,
 )
 from chimebuddy.twitch.device_authorization import (
     DeviceAuthorization,
@@ -201,18 +201,63 @@ class AccountLinkingServiceTests(
             repr(challenge),
         )
 
-    async def test_complete_creates_link_and_request(
+    async def test_authentication_does_not_save_link(
         self,
     ) -> None:
         challenge = await self.service.start(
             self.discord_account
         )
 
-        result = await self.service.complete(
-            challenge,
-            requester_message=(
-                "Please add my Twitch channel."
-            ),
+        authorization = await self.service.authenticate(
+            challenge
+        )
+
+        link = (
+            await self.identity_repository
+            .get_account_link("456")
+        )
+        credential = (
+            await self.credential_repository.get(
+                "456",
+                OAuthCredentialKind.BROADCASTER,
+            )
+        )
+        request = (
+            await self.request_repository
+            .get_open_for_discord("123")
+        )
+
+        self.assertEqual(
+            authorization.twitch_login,
+            "example_streamer",
+        )
+        self.assertIsNone(link)
+        self.assertIsNone(credential)
+        self.assertIsNone(request)
+        self.assertNotIn(
+            "test-access-token",
+            repr(authorization),
+        )
+
+    async def test_confirmation_creates_request(
+        self,
+    ) -> None:
+        challenge = await self.service.start(
+            self.discord_account
+        )
+
+        authorization = await self.service.authenticate(
+            challenge
+        )
+
+        result = (
+            await self.service
+            .confirm_and_create_request(
+                authorization,
+                requester_message=(
+                    "Please add my Twitch channel."
+                ),
+            )
         )
 
         link = (
@@ -227,14 +272,6 @@ class AccountLinkingServiceTests(
         )
 
         self.assertEqual(
-            result.twitch_user_id,
-            "456",
-        )
-        self.assertEqual(
-            link.discord_user_id,
-            "123",
-        )
-        self.assertEqual(
             link.status,
             AccountLinkStatus.VERIFIED,
         )
@@ -242,6 +279,39 @@ class AccountLinkingServiceTests(
         self.assertEqual(
             result.request.status,
             BroadcasterRequestStatus.PENDING,
+        )
+        self.assertEqual(
+            result.request.requester_message,
+            "Please add my Twitch channel.",
+        )
+
+    async def test_cancel_discards_pending_session(
+        self,
+    ) -> None:
+        challenge = await self.service.start(
+            self.discord_account
+        )
+
+        authorization = await self.service.authenticate(
+            challenge
+        )
+
+        cancelled = (
+            await self.service.cancel_authorization(
+                authorization
+            )
+        )
+
+        stored_session = (
+            await self.session_repository.get(
+                challenge.session_id
+            )
+        )
+
+        self.assertTrue(cancelled)
+        self.assertEqual(
+            stored_session.status,
+            AccountLinkSessionStatus.CANCELLED,
         )
 
     async def test_blacklist_blocks_before_twitch(
@@ -266,7 +336,7 @@ class AccountLinkingServiceTests(
             self.device_client.start_calls,
             0,
         )
-        
+
     async def test_existing_request_blocks_before_twitch(
         self,
     ) -> None:

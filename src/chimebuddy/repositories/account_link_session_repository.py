@@ -151,6 +151,38 @@ class AccountLinkSessionRepository:
 
         return self._from_row(row)
 
+    async def extend_expiry(
+        self,
+        session_id: str,
+        expires_at: int,
+    ) -> bool:
+        new_expiry = int(expires_at)
+
+        if new_expiry <= 0:
+            raise ValueError(
+                "expires_at must be greater than zero."
+            )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE account_link_sessions
+                SET expires_at = ?
+                WHERE session_id = ?
+                  AND status = 'pending'
+                """,
+                (
+                    new_expiry,
+                    str(session_id).strip(),
+                ),
+            )
+
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return changed
+
     async def authorize(
         self,
         session_id: str,
