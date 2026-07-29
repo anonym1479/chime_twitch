@@ -22,3 +22,6 @@ class DuplicateTriggerNameError(RepositoryError):
 
 class PendingAccountLinkSessionError(RepositoryError):
     """Raised when a Discord user already has a pending link session."""
+
+class OpenBroadcasterRequestError(RepositoryError):
+    """Raised when an account already has an open broadcaster request."""
