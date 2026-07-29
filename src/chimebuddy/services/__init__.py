@@ -33,6 +33,7 @@ from chimebuddy.services.account_linking_service import (
     AccountLinkingService,
     LinkAuthorizationValidationError,
     LinkSessionCompletionError,
+    ExistingBroadcasterRequestError,
 )
 
 __all__ = [
@@ -60,4 +61,5 @@ __all__ = [
     "AccountLinkingService",
     "LinkAuthorizationValidationError",
     "LinkSessionCompletionError",
+    "ExistingBroadcasterRequestError"
 ]

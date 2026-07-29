@@ -54,6 +54,22 @@ AuthorizationWaiter = Callable[
 class AccountLinkingError(RuntimeError):
     """Base error for combined account linking."""
 
+class ExistingBroadcasterRequestError(
+    AccountLinkingError
+):
+    """Raised when Discord already owns an open request."""
+
+    def __init__(
+        self,
+        request: BroadcasterRequest,
+    ) -> None:
+        self.request = request
+
+        super().__init__(
+            "This Discord account already has "
+            f"request {request.request_id} with status "
+            f"{request.status.value}."
+        )
 
 class LinkAuthorizationValidationError(
     AccountLinkingError
@@ -167,6 +183,18 @@ class AccountLinkingService:
             raise BlacklistedIdentityError(
                 "This Discord account cannot request "
                 "ChimeBuddy access."
+            )
+
+        existing_request = (
+            await self.onboarding_service
+            .get_open_request_for_discord(
+                discord_account.discord_user_id
+            )
+        )
+
+        if existing_request is not None:
+            raise ExistingBroadcasterRequestError(
+                existing_request
             )
 
         await self.identity_repository.save_discord_account(

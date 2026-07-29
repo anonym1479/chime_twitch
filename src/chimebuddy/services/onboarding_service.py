@@ -126,6 +126,20 @@ class OnboardingService:
             )
         )
 
+    async def get_open_request_for_discord(
+        self,
+        discord_user_id: str,
+    ) -> BroadcasterRequest | None:
+        discord_id = self._required_text(
+            discord_user_id,
+            "discord_user_id",
+        )
+
+        return (
+            await self.request_repository
+            .get_open_for_discord(discord_id)
+        )
+
     async def begin_approval(
         self,
         request_id: int,

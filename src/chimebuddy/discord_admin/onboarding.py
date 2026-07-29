@@ -17,6 +17,12 @@ from chimebuddy.twitch.device_authorization import (
     DeviceAuthorizationDeniedError,
     DeviceAuthorizationExpiredError,
 )
+from chimebuddy.services import (
+    AccountLinkChallenge,
+    AccountLinkingService,
+    BlacklistedIdentityError,
+    ExistingBroadcasterRequestError,
+)
 
 
 logger = logging.getLogger(
@@ -214,6 +220,22 @@ class DiscordOnboardingController:
                     discord_account
                 )
             )
+
+        except ExistingBroadcasterRequestError as exc:
+            request = exc.request
+
+            await interaction.edit_original_response(
+                content=(
+                    "You already have a Chimebuddy "
+                    "request.\n\n"
+                    f"Request ID: `{request.request_id}`\n"
+                    "Current status: "
+                    f"`{request.status.value}`\n\n"
+                    "You do not need to authorize "
+                    "Twitch again."
+                )
+            )
+            return
 
         except PendingAccountLinkSessionError:
             await interaction.edit_original_response(

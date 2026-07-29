@@ -23,6 +23,7 @@ from chimebuddy.services import (
     AccountLinkingService,
     BlacklistedIdentityError,
     OnboardingService,
+    ExistingBroadcasterRequestError,
 )
 from chimebuddy.twitch.device_authorization import (
     DeviceAuthorization,
@@ -256,6 +257,29 @@ class AccountLinkingServiceTests(
 
         with self.assertRaises(
             BlacklistedIdentityError
+        ):
+            await self.service.start(
+                self.discord_account
+            )
+
+        self.assertEqual(
+            self.device_client.start_calls,
+            0,
+        )
+        
+    async def test_existing_request_blocks_before_twitch(
+        self,
+    ) -> None:
+        challenge = await self.service.start(
+            self.discord_account
+        )
+
+        await self.service.complete(challenge)
+
+        self.device_client.start_calls = 0
+
+        with self.assertRaises(
+            ExistingBroadcasterRequestError
         ):
             await self.service.start(
                 self.discord_account
