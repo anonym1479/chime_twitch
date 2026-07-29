@@ -6,6 +6,7 @@ from chimebuddy.repositories.broadcaster_request_repository import (
 )
 from chimebuddy.repositories.errors import (
     AccountLinkNotVerifiedError,
+    ActiveBlacklistEntryError,
     DuplicateTriggerNameError,
     OpenBroadcasterRequestError,
     PendingAccountLinkSessionError,
@@ -20,6 +21,9 @@ from chimebuddy.repositories.oauth_repository import (
 from chimebuddy.repositories.trigger_repository import (
     TriggerRepository,
 )
+from chimebuddy.repositories.blacklist_repository import (
+    BroadcasterBlacklistRepository,
+)
 
 __all__ = [
     "AccountLinkNotVerifiedError",
@@ -32,4 +36,6 @@ __all__ = [
     "PendingAccountLinkSessionError",
     "RepositoryError",
     "TriggerRepository",
+    "ActiveBlacklistEntryError",
+    "BroadcasterBlacklistRepository",
 ]

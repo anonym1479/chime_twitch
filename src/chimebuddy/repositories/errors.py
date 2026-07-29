@@ -25,3 +25,6 @@ class PendingAccountLinkSessionError(RepositoryError):
 
 class OpenBroadcasterRequestError(RepositoryError):
     """Raised when an account already has an open broadcaster request."""
+
+class ActiveBlacklistEntryError(RepositoryError):
+    """Raised when an identity is already actively blacklisted."""
