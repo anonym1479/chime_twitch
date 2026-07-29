@@ -22,6 +22,7 @@ from chimebuddy.discord_admin.status_service import (
 from chimebuddy.repositories import (
     AccountLinkCompletionRepository,
     AccountLinkSessionRepository,
+    AppSettingsRepository,
     BroadcasterBlacklistRepository,
     BroadcasterRequestRepository,
     IdentityRepository,
@@ -36,6 +37,9 @@ from chimebuddy.twitch.device_authorization import (
 )
 from chimebuddy.twitch.oauth_client import (
     TwitchOAuthClient,
+)
+from chimebuddy.discord_admin.review import (
+    DiscordReviewController,
 )
 
 
@@ -97,6 +101,17 @@ async def run(settings: Settings) -> None:
         BroadcasterRequestRepository(database)
     )
 
+    settings_repository = (
+        AppSettingsRepository(database)
+    )
+    review_controller = ( 
+        DiscordReviewController(
+            settings_repository=settings_repository,
+            request_repository=request_repository,
+            identity_repository=identity_repository
+        )
+    )
+
     status_service = DiscordAdminStatusService(
         identity_repository
     )
@@ -154,7 +169,8 @@ async def run(settings: Settings) -> None:
 
         onboarding_controller = (
             DiscordOnboardingController(
-                account_linking_service
+                account_linking_service,
+                review_controller=review_controller,
             )
         )
 
@@ -169,6 +185,7 @@ async def run(settings: Settings) -> None:
             onboarding_controller=(
                 onboarding_controller
             ),
+            review_controller=review_controller,
         )
 
         async with client:

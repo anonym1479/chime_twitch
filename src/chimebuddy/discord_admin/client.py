@@ -9,6 +9,9 @@ from chimebuddy.discord_admin.onboarding import (
 from chimebuddy.discord_admin.status_service import (
     DiscordAdminStatusService,
 )
+from chimebuddy.discord_admin.review import (
+    DiscordReviewController,
+)
 
 
 logger = logging.getLogger(
@@ -38,6 +41,9 @@ class ChimeBuddyDiscordClient(discord.Client):
         onboarding_controller: (
             DiscordOnboardingController | None
         ) = None,
+        review_controller:(
+            DiscordReviewController | None
+        ) = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -58,6 +64,7 @@ class ChimeBuddyDiscordClient(discord.Client):
         self.onboarding_controller = (
             onboarding_controller
         )
+        self.review_controller = review_controller
 
         self.command_tree = app_commands.CommandTree(
             self,
@@ -103,6 +110,26 @@ class ChimeBuddyDiscordClient(discord.Client):
                     callback=(
                         setup_onboarding_command
                     ),
+                ),
+                guild=self.guild_object,
+            )
+
+        if self.review_controller is not None:
+            async def setup_review_command(
+                interaction: discord.Interaction,
+            ) -> None:
+                await self._handle_setup_review(
+                    interaction
+                )
+
+            self.command_tree.add_command(
+                app_commands.Command(
+                    name="setup-review",
+                    description=(
+                        "Use this channel for reviewing "
+                        "ChimeBuddy requests."
+                    ),
+                    callback=setup_review_command,
                 ),
                 guild=self.guild_object,
             )
@@ -176,6 +203,38 @@ class ChimeBuddyDiscordClient(discord.Client):
         await interaction.response.send_message(
             status.render(),
             ephemeral=True,
+        )
+
+    async def _handle_setup_review(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        if not self._is_developer_interaction(
+            interaction
+        ):
+            logger.warning(
+                "Denied Discord /setup-review request "
+                "from user %s.",
+                interaction.user.id,
+            )
+
+            await interaction.response.send_message(
+                "Only the ChimeBuddy developer can "
+                "configure the review channel.",
+                ephemeral=True,
+            )
+            return
+
+        if self.review_controller is None:
+            await interaction.response.send_message(
+                "The request review system is not "
+                "configured.",
+                ephemeral=True,
+            )
+            return
+
+        await self.review_controller.configure_channel(
+            interaction
         )
 
     async def _handle_setup_onboarding(

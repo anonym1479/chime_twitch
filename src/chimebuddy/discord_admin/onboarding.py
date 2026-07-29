@@ -23,6 +23,9 @@ from chimebuddy.services import (
     BlacklistedIdentityError,
     ExistingBroadcasterRequestError,
 )
+from chimebuddy.discord_admin.review import (
+    DiscordReviewController,
+)
 
 
 logger = logging.getLogger(
@@ -113,10 +116,14 @@ class DiscordOnboardingController:
     def __init__(
         self,
         account_linking_service: AccountLinkingService,
+        review_controller: (
+            DiscordReviewController | None
+        ) = None,
     ) -> None:
         self.account_linking_service = (
             account_linking_service
         )
+        self.review_controller = review_controller
 
     def create_view(self) -> OnboardingView:
         return OnboardingView(self)
@@ -348,6 +355,19 @@ class DiscordOnboardingController:
                 )
             )
             return
+
+        if self.review_controller is not None:
+            try:
+                await self.review_controller.publish_request(
+                    interaction.client,
+                    result.request,
+                )
+            except Exception:
+                logger.exception(
+                    "Request %s was saved, but its "
+                    "Discord review message failed.",
+                    result.request.request_id,
+                )
 
         linked_role = await self._assign_linked_role(
             interaction
