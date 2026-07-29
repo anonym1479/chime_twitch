@@ -131,6 +131,64 @@ class IdentityRepository:
             )
             await connection.commit()
 
+    async def get_twitch_account(
+        self,
+        twitch_user_id: str,
+    ) -> TwitchAccount | None:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT
+                    twitch_user_id,
+                    login,
+                    display_name
+                FROM twitch_accounts
+                WHERE twitch_user_id = ?
+                """,
+                (str(twitch_user_id).strip(),),
+            )
+
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        if row is None:
+            return None
+
+        return TwitchAccount(
+            twitch_user_id=row["twitch_user_id"],
+            login=row["login"],
+            display_name=row["display_name"],
+        )
+
+    async def get_discord_account(
+        self,
+        discord_user_id: str,
+    ) -> DiscordAccount | None:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT
+                    discord_user_id,
+                    username,
+                    display_name
+                FROM discord_accounts
+                WHERE discord_user_id = ?
+                """,
+                (str(discord_user_id).strip(),),
+            )
+
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        if row is None:
+            return None
+
+        return DiscordAccount(
+            discord_user_id=row["discord_user_id"],
+            username=row["username"],
+            display_name=row["display_name"],
+        )
+
     async def get_account_link(
         self,
         twitch_user_id: str,
