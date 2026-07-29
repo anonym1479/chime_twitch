@@ -28,3 +28,6 @@ class OpenBroadcasterRequestError(RepositoryError):
 
 class ActiveBlacklistEntryError(RepositoryError):
     """Raised when an identity is already actively blacklisted."""
+
+class BroadcasterPanelExistsError(RepositoryError):
+    """Raised when a broadcaster request already has a private panel."""
