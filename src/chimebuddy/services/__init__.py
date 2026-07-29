@@ -26,6 +26,14 @@ from chimebuddy.services.onboarding_service import (
     OnboardingService,
     RequestStateConflictError,
 )
+from chimebuddy.services.account_linking_service import (
+    AccountLinkChallenge,
+    AccountLinkResult,
+    AccountLinkingError,
+    AccountLinkingService,
+    LinkAuthorizationValidationError,
+    LinkSessionCompletionError,
+)
 
 __all__ = [
     "ChatGateway",
@@ -46,4 +54,10 @@ __all__ = [
     "OnboardingError",
     "OnboardingService",
     "RequestStateConflictError",
+    "AccountLinkChallenge",
+    "AccountLinkResult",
+    "AccountLinkingError",
+    "AccountLinkingService",
+    "LinkAuthorizationValidationError",
+    "LinkSessionCompletionError",
 ]

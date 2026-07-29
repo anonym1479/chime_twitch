@@ -224,6 +224,18 @@ class AccountLinkSessionRepository:
             AccountLinkSessionStatus.CANCELLED,
         )
 
+    async def expire(
+        self,
+        session_id: str,
+    ) -> bool:
+        return await self._finish_pending(
+            session_id,
+            AccountLinkSessionStatus.EXPIRED,
+            last_error=(
+                "The Twitch device authorization expired."
+            ),
+        )
+
     async def expire_due(
         self,
         *,
@@ -264,6 +276,7 @@ class AccountLinkSessionRepository:
         if status not in {
             AccountLinkSessionStatus.FAILED,
             AccountLinkSessionStatus.CANCELLED,
+            AccountLinkSessionStatus.EXPIRED,
         }:
             raise ValueError(
                 "Unsupported link-session completion status."
