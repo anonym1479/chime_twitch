@@ -227,4 +227,228 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=5,
+        name="create_discord_onboarding_tables",
+        statements=(
+            """
+            CREATE UNIQUE INDEX
+                account_links_discord_user_id_unique_idx
+            ON account_links(discord_user_id)
+            """,
+            """
+            CREATE TABLE account_link_sessions (
+                session_id TEXT PRIMARY KEY,
+                discord_user_id TEXT NOT NULL,
+                twitch_user_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                requested_scopes_json TEXT NOT NULL DEFAULT '[]',
+                expires_at INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TEXT,
+                last_error TEXT,
+
+                FOREIGN KEY (discord_user_id)
+                    REFERENCES discord_accounts(discord_user_id)
+                    ON DELETE RESTRICT,
+
+                FOREIGN KEY (twitch_user_id)
+                    REFERENCES twitch_accounts(twitch_user_id)
+                    ON DELETE SET NULL,
+
+                CHECK (length(trim(session_id)) > 0),
+                CHECK (expires_at > 0),
+                CHECK (
+                    status IN (
+                        'pending',
+                        'authorized',
+                        'expired',
+                        'cancelled',
+                        'failed'
+                    )
+                )
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX
+                account_link_sessions_pending_discord_idx
+            ON account_link_sessions(discord_user_id)
+            WHERE status = 'pending'
+            """,
+            """
+            CREATE INDEX
+                account_link_sessions_status_expiry_idx
+            ON account_link_sessions(status, expires_at)
+            """,
+            """
+            CREATE TABLE broadcaster_requests (
+                request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                twitch_user_id TEXT NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+
+                review_guild_id TEXT,
+                review_channel_id TEXT,
+                review_message_id TEXT,
+
+                decision_reason TEXT,
+                requester_message TEXT,
+                decided_by_discord_user_id TEXT,
+
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                decided_at TEXT,
+                provisioned_at TEXT,
+
+                FOREIGN KEY (twitch_user_id)
+                    REFERENCES twitch_accounts(twitch_user_id)
+                    ON DELETE RESTRICT,
+
+                FOREIGN KEY (discord_user_id)
+                    REFERENCES discord_accounts(discord_user_id)
+                    ON DELETE RESTRICT,
+
+                CHECK (
+                    status IN (
+                        'pending',
+                        'approving',
+                        'provisioning',
+                        'active',
+                        'rejected',
+                        'blacklisted',
+                        'provisioning_failed',
+                        'suspended',
+                        'reauthorization_required'
+                    )
+                )
+            )
+            """,
+            """
+            CREATE INDEX
+                broadcaster_requests_status_created_idx
+            ON broadcaster_requests(status, created_at)
+            """,
+            """
+            CREATE UNIQUE INDEX
+                broadcaster_requests_open_twitch_idx
+            ON broadcaster_requests(twitch_user_id)
+            WHERE status IN (
+                'pending',
+                'approving',
+                'provisioning',
+                'active',
+                'provisioning_failed',
+                'suspended',
+                'reauthorization_required'
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX
+                broadcaster_requests_open_discord_idx
+            ON broadcaster_requests(discord_user_id)
+            WHERE status IN (
+                'pending',
+                'approving',
+                'provisioning',
+                'active',
+                'provisioning_failed',
+                'suspended',
+                'reauthorization_required'
+            )
+            """,
+            """
+            CREATE TABLE broadcaster_panels (
+                twitch_user_id TEXT PRIMARY KEY,
+                request_id INTEGER NOT NULL UNIQUE,
+                discord_guild_id TEXT NOT NULL,
+                discord_channel_id TEXT NOT NULL UNIQUE,
+                opening_message_id TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE,
+
+                FOREIGN KEY (request_id)
+                    REFERENCES broadcaster_requests(request_id)
+                    ON DELETE RESTRICT,
+
+                CHECK (length(trim(discord_guild_id)) > 0),
+                CHECK (length(trim(discord_channel_id)) > 0)
+            )
+            """,
+            """
+            CREATE TABLE broadcaster_blacklist (
+                blacklist_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_user_id TEXT,
+                twitch_user_id TEXT,
+                internal_reason TEXT NOT NULL,
+                requester_message TEXT,
+                created_by_discord_user_id TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TEXT,
+                revoked_by_discord_user_id TEXT,
+                revocation_reason TEXT,
+
+                CHECK (
+                    discord_user_id IS NOT NULL
+                    OR twitch_user_id IS NOT NULL
+                ),
+                CHECK (
+                    length(trim(internal_reason)) > 0
+                ),
+                CHECK (
+                    length(
+                        trim(created_by_discord_user_id)
+                    ) > 0
+                ),
+                CHECK (active IN (0, 1))
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX
+                broadcaster_blacklist_active_discord_idx
+            ON broadcaster_blacklist(discord_user_id)
+            WHERE
+                active = 1
+                AND discord_user_id IS NOT NULL
+            """,
+            """
+            CREATE UNIQUE INDEX
+                broadcaster_blacklist_active_twitch_idx
+            ON broadcaster_blacklist(twitch_user_id)
+            WHERE
+                active = 1
+                AND twitch_user_id IS NOT NULL
+            """,
+            """
+            CREATE TABLE onboarding_request_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT,
+                actor_discord_user_id TEXT,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (request_id)
+                    REFERENCES broadcaster_requests(request_id)
+                    ON DELETE CASCADE,
+
+                CHECK (length(trim(event_type)) > 0)
+            )
+            """,
+            """
+            CREATE INDEX
+                onboarding_request_events_request_idx
+            ON onboarding_request_events(
+                request_id,
+                created_at
+            )
+            """,
+        ),
+    ),
 )

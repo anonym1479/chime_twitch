@@ -17,6 +17,11 @@ EXPECTED_TABLES = {
     "triggers",
     "trigger_runtime_state",
     "oauth_credentials",
+    "account_link_sessions",
+    "broadcaster_requests",
+    "broadcaster_panels",
+    "broadcaster_blacklist",
+    "onboarding_request_events",
 }
 
 
@@ -37,7 +42,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         applied_versions = await self.database.initialize()
 
         self.assertTrue(self.database_path.exists())
-        self.assertEqual(applied_versions, [1, 2, 3, 4])
+        self.assertEqual(applied_versions, [1, 2, 3, 4, 5])
 
         async with self.database.connect() as connection:
             cursor = await connection.execute(
@@ -61,7 +66,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         first_result = await self.database.initialize()
         second_result = await self.database.initialize()
 
-        self.assertEqual(first_result, [1, 2, 3, 4])
+        self.assertEqual(first_result, [1, 2, 3, 4, 5])
         self.assertEqual(second_result, [])
 
     async def test_identity_and_broadcaster_relationships(self) -> None:
@@ -179,6 +184,86 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     (
                         "unknown-twitch-id",
                         "unknown-discord-id",
+                    ),
+                )
+
+    async def test_discord_account_cannot_link_twice(
+        self,
+    ) -> None:
+        await self.database.initialize()
+
+        async with self.database.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO discord_accounts (
+                    discord_user_id,
+                    username,
+                    display_name
+                )
+                VALUES (?, ?, ?)
+                """,
+                (
+                    "123456789",
+                    "example_user",
+                    "Example User",
+                ),
+            )
+
+            await connection.executemany(
+                """
+                INSERT INTO twitch_accounts (
+                    twitch_user_id,
+                    login,
+                    display_name
+                )
+                VALUES (?, ?, ?)
+                """,
+                [
+                    (
+                        "100",
+                        "streamer_one",
+                        "Streamer One",
+                    ),
+                    (
+                        "200",
+                        "streamer_two",
+                        "Streamer Two",
+                    ),
+                ],
+            )
+
+            await connection.execute(
+                """
+                INSERT INTO account_links (
+                    twitch_user_id,
+                    discord_user_id,
+                    status
+                )
+                VALUES (?, ?, 'verified')
+                """,
+                (
+                    "100",
+                    "123456789",
+                ),
+            )
+
+            await connection.commit()
+
+            with self.assertRaises(
+                aiosqlite.IntegrityError
+            ):
+                await connection.execute(
+                    """
+                    INSERT INTO account_links (
+                        twitch_user_id,
+                        discord_user_id,
+                        status
+                    )
+                    VALUES (?, ?, 'verified')
+                    """,
+                    (
+                        "200",
+                        "123456789",
                     ),
                 )
 
