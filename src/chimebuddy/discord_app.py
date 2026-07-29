@@ -27,11 +27,13 @@ from chimebuddy.repositories import (
     BroadcasterRequestRepository,
     IdentityRepository,
     OAuthCredentialRepository,
+    BroadcasterPanelRepository,
 )
 from chimebuddy.services import (
     AccountLinkingService,
     OnboardingService,
     ReviewDecisionService,
+    BroadcasterProvisioningService,
 )
 from chimebuddy.twitch.device_authorization import (
     TwitchDeviceAuthorizationClient,
@@ -41,6 +43,9 @@ from chimebuddy.twitch.oauth_client import (
 )
 from chimebuddy.discord_admin.review import (
     DiscordReviewController,
+)
+from chimebuddy.discord_admin.provisioning import (
+    DiscordBroadcasterPanelGateway,
 )
 
 
@@ -102,8 +107,56 @@ async def run(settings: Settings) -> None:
         BroadcasterRequestRepository(database)
     )
 
+    panel_repository = (
+        BroadcasterPanelRepository(database)
+    )
+
     settings_repository = (
         AppSettingsRepository(database)
+    )
+
+    status_service = DiscordAdminStatusService(
+        identity_repository
+    )
+
+    onboarding_service = OnboardingService(
+        identity_repository=identity_repository,
+        credential_repository=(
+            credential_repository
+        ),
+        request_repository=request_repository,
+        blacklist_repository=(
+            blacklist_repository
+        ),
+    )
+
+    panel_gateway = (
+        DiscordBroadcasterPanelGateway(
+            settings_repository=(
+                settings_repository
+            ),
+            discord_guild_id=(
+                settings.discord_guild_id
+            ),
+        )
+    )
+
+    provisioning_service = (
+        BroadcasterProvisioningService(
+            onboarding_service=(
+                onboarding_service
+            ),
+            identity_repository=(
+                identity_repository
+            ),
+            request_repository=(
+                request_repository
+            ),
+            panel_repository=(
+                panel_repository
+            ),
+            panel_gateway=panel_gateway,
+        )
     )
 
     review_decision_service = (
@@ -123,22 +176,10 @@ async def run(settings: Settings) -> None:
             developer_discord_user_id=(
                 settings.developer_discord_user_id
             ),
+            provisioning_service=(
+                provisioning_service
+            ),
         )
-    )
-
-    status_service = DiscordAdminStatusService(
-        identity_repository
-    )
-
-    onboarding_service = OnboardingService(
-        identity_repository=identity_repository,
-        credential_repository=(
-            credential_repository
-        ),
-        request_repository=request_repository,
-        blacklist_repository=(
-            blacklist_repository
-        ),
     )
 
     async with aiohttp.ClientSession() as session:
@@ -201,6 +242,8 @@ async def run(settings: Settings) -> None:
             ),
             review_controller=review_controller,
         )
+
+        panel_gateway.bind_client(client)
 
         async with client:
             await client.start(

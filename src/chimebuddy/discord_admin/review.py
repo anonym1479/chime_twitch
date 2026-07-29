@@ -18,6 +18,8 @@ from chimebuddy.services import (
     ReviewDecisionService,
     ReviewRequestNotFoundError,
     ReviewRequestStateError,
+    BroadcasterProvisioningFailedError,
+    BroadcasterProvisioningService,
 )
 
 
@@ -405,6 +407,9 @@ class DiscordReviewController:
         identity_repository: IdentityRepository,
         decision_service: ReviewDecisionService,
         developer_discord_user_id: int,
+        provisioning_service: (
+            BroadcasterProvisioningService | None
+        ) = None
     ) -> None:
         self.settings_repository = (
             settings_repository
@@ -418,6 +423,9 @@ class DiscordReviewController:
         self.decision_service = decision_service
         self.developer_discord_user_id = int(
             developer_discord_user_id
+        )
+        self.provisioning_service = (
+            provisioning_service
         )
 
     def is_developer(
@@ -736,7 +744,7 @@ class DiscordReviewController:
             await interaction.edit_original_response(
                 content=(
                     "ChimeBuddy could not approve this "
-                    "request. No provisioning was started."
+                    "request."
                 )
             )
             return
@@ -746,13 +754,106 @@ class DiscordReviewController:
             request,
         )
 
+        if self.provisioning_service is None:
+            await interaction.edit_original_response(
+                content=(
+                    f"Request `{request_id}` was approved, "
+                    "but automatic provisioning is not "
+                    "configured."
+                )
+            )
+            return
+
+        try:
+            result = (
+                await self.provisioning_service.provision(
+                    request_id,
+                    actor_discord_user_id=str(
+                        interaction.user.id
+                    ),
+                )
+            )
+
+        except BroadcasterProvisioningFailedError:
+            logger.exception(
+                "Provisioning failed for approved "
+                "request %s.",
+                request_id,
+            )
+
+            failed_request = (
+                await self.request_repository.get(
+                    request_id
+                )
+            )
+
+            if failed_request is not None:
+                await self._refresh_interaction_message(
+                    interaction,
+                    failed_request,
+                )
+
+            await interaction.edit_original_response(
+                content=(
+                    f"Request `{request_id}` was approved, "
+                    "but provisioning failed.\n\n"
+                    "The broadcaster remains disabled. "
+                    "The failure was recorded safely."
+                )
+            )
+            return
+
+        except Exception:
+            logger.exception(
+                "Unexpected provisioning error for "
+                "request %s.",
+                request_id,
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "An unexpected error occurred during "
+                    "provisioning. Check the request "
+                    "status and logs."
+                )
+            )
+            return
+
+        active_request = (
+            await self.request_repository.get(
+                request_id
+            )
+        )
+
+        if active_request is not None:
+            await self._refresh_interaction_message(
+                interaction,
+                active_request,
+            )
+
+            notified = await self._notify_approved(
+                interaction.client,
+                active_request,
+                result.discord_channel_id,
+            )
+        else:
+            notified = False
+
+        notification_text = (
+            "The broadcaster was notified by DM."
+            if notified
+            else (
+                "Provisioning succeeded, but the "
+                "broadcaster could not be reached by DM."
+            )
+        )
+
         await interaction.edit_original_response(
             content=(
-                f"Request `{request_id}` was approved.\n\n"
-                "Its status is now `approving`. The next "
-                "development step will provision the "
-                "broadcaster's private channel and "
-                "activate their Twitch channel."
+                f"Request `{request_id}` is now active.\n\n"
+                "Private broadcaster channel: "
+                f"<#{result.discord_channel_id}>\n\n"
+                f"{notification_text}"
             )
         )
 
@@ -948,6 +1049,59 @@ class DiscordReviewController:
                 f"{notification_text}"
             )
         )
+
+    async def _notify_approved(
+        self,
+        client: discord.Client,
+        request: BroadcasterRequest,
+        discord_channel_id: str,
+    ) -> bool:
+        try:
+            discord_user_id = int(
+                request.discord_user_id
+            )
+        except ValueError:
+            return False
+
+        user = client.get_user(discord_user_id)
+
+        if user is None:
+            try:
+                user = await client.fetch_user(
+                    discord_user_id
+                )
+            except discord.HTTPException:
+                logger.exception(
+                    "Could not load approved Discord "
+                    "user %s.",
+                    discord_user_id,
+                )
+                return False
+
+        try:
+            await user.send(
+                (
+                    "**Your ChimeBuddy request was "
+                    "approved!**\n\n"
+                    f"Request ID: `{request.request_id}`\n"
+                    "Status: `active`\n\n"
+                    "Your private administration channel "
+                    "is ready:\n"
+                    f"<#{discord_channel_id}>"
+                ),
+                allowed_mentions=(
+                    discord.AllowedMentions.none()
+                ),
+            )
+        except discord.HTTPException:
+            logger.warning(
+                "Approved Discord user %s could not "
+                "be notified.",
+                discord_user_id,
+            )
+            return False
+
+        return True
 
     async def _notify_requester(
         self,
