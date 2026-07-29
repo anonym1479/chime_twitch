@@ -32,6 +32,9 @@ from chimebuddy.repositories.panel_repository import (
 from chimebuddy.repositories.trigger_repository import (
     TriggerRepository,
 )
+from chimebuddy.repositories.app_settings_repository import (
+    AppSettingsRepository,
+)
 
 __all__ = [
     "AccountLinkCompletionRepository",
@@ -50,4 +53,5 @@ __all__ = [
     "PendingAccountLinkSessionError",
     "RepositoryError",
     "TriggerRepository",
+    "AppSettingsRepository",
 ]
