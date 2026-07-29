@@ -18,6 +18,14 @@ from chimebuddy.services.stream_title_monitor import (
     StreamTitleMonitor,
     TitleMonitorReport,
 )
+from chimebuddy.services.onboarding_service import (
+    AccountLinkRequiredError,
+    BlacklistedIdentityError,
+    BroadcasterAuthorizationRequiredError,
+    OnboardingError,
+    OnboardingService,
+    RequestStateConflictError,
+)
 
 __all__ = [
     "ChatGateway",
@@ -32,4 +40,10 @@ __all__ = [
     "BroadcasterTitleCheck",
     "StreamTitleMonitor",
     "TitleMonitorReport",
+    "AccountLinkRequiredError",
+    "BlacklistedIdentityError",
+    "BroadcasterAuthorizationRequiredError",
+    "OnboardingError",
+    "OnboardingService",
+    "RequestStateConflictError",
 ]

@@ -131,6 +131,41 @@ class IdentityRepository:
             )
             await connection.commit()
 
+    async def get_account_link(
+        self,
+        twitch_user_id: str,
+    ) -> AccountLink | None:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT
+                    twitch_user_id,
+                    discord_user_id,
+                    status,
+                    verification_method
+                FROM account_links
+                WHERE twitch_user_id = ?
+                """,
+                (str(twitch_user_id).strip(),),
+            )
+
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        if row is None:
+            return None
+
+        return AccountLink(
+            twitch_user_id=row["twitch_user_id"],
+            discord_user_id=row["discord_user_id"],
+            status=AccountLinkStatus(
+                row["status"]
+            ),
+            verification_method=(
+                row["verification_method"]
+            ),
+        )
+
     async def save_broadcaster(
         self,
         broadcaster: Broadcaster,
