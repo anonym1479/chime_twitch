@@ -1,7 +1,11 @@
 import logging
+import time
 
 import discord
 
+from chimebuddy.discord_admin.review import (
+    DiscordReviewController,
+)
 from chimebuddy.models import DiscordAccount
 from chimebuddy.repositories import (
     AccountLinkIdentityConflictError,
@@ -9,22 +13,15 @@ from chimebuddy.repositories import (
     PendingAccountLinkSessionError,
 )
 from chimebuddy.services import (
-    AccountLinkChallenge,
-    AccountLinkingService,
-    BlacklistedIdentityError,
-)
-from chimebuddy.twitch.device_authorization import (
-    DeviceAuthorizationDeniedError,
-    DeviceAuthorizationExpiredError,
-)
-from chimebuddy.services import (
+    AccountLinkAuthorization,
     AccountLinkChallenge,
     AccountLinkingService,
     BlacklistedIdentityError,
     ExistingBroadcasterRequestError,
 )
-from chimebuddy.discord_admin.review import (
-    DiscordReviewController,
+from chimebuddy.twitch.device_authorization import (
+    DeviceAuthorizationDeniedError,
+    DeviceAuthorizationExpiredError,
 )
 
 
@@ -33,8 +30,17 @@ logger = logging.getLogger(
 )
 
 LINKED_ROLE_NAME = "Twitch Linked"
+
 CONNECT_BUTTON_CUSTOM_ID = (
     "chimebuddy:onboarding:connect"
+)
+
+CONFIRM_BUTTON_CUSTOM_ID = (
+    "chimebuddy:onboarding:confirm"
+)
+
+CANCEL_BUTTON_CUSTOM_ID = (
+    "chimebuddy:onboarding:different-account"
 )
 
 
@@ -45,21 +51,73 @@ def build_onboarding_embed() -> discord.Embed:
             "Connect your Discord account to your Twitch "
             "account and submit a request to use "
             "ChimeBuddy.\n\n"
-            "**Before you begin a few info:**\n"
-            "• You will need to sign in with your broadcaster account.\n"
+            "**Before you begin:**\n"
+            "• Sign in with your broadcaster account.\n"
             "• Twitch will ask for the `channel:bot` "
             "permission.\n"
             "• Your authorization code will only be "
             "shown to you.\n"
-            "• Your request will require developer "
-            "approval."
+            "• You can verify the connected account "
+            "before submitting your request.\n"
+            "• Your request requires developer approval."
         ),
         color=discord.Color.orange(),
     )
 
     embed.set_footer(
+        text="Press the button below when you are ready."
+    )
+
+    return embed
+
+
+def build_confirmation_embed(
+    authorization: AccountLinkAuthorization,
+    discord_user: discord.abc.User,
+) -> discord.Embed:
+    embed = discord.Embed(
+        title="Check your account information",
+        description=(
+            "Twitch authorization was successful.\n\n"
+            "Please confirm that these are the accounts "
+            "you want to connect."
+        ),
+        color=discord.Color.orange(),
+    )
+
+    embed.add_field(
+        name="Twitch account",
+        value=(
+            f"Channel: `{authorization.twitch_login}`\n"
+            f"ID: `{authorization.twitch_user_id}`"
+        ),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Discord account",
+        value=(
+            f"{discord_user.mention}\n"
+            f"ID: `{authorization.discord_user_id}`"
+        ),
+        inline=True,
+    )
+
+    embed.add_field(
+        name="Next step",
+        value=(
+            "Press **Continue to request** to add an "
+            "optional message and submit your request.\n\n"
+            "If the Twitch account is incorrect, choose "
+            "**Use another Twitch account**."
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(
         text=(
-            "Press the button below when you are ready."
+            "Your Twitch credential and ChimeBuddy "
+            "request have not been saved yet."
         )
     )
 
@@ -82,6 +140,229 @@ def render_challenge(
         "ChimeBuddy is waiting for Twitch. You do not "
         "need to press the Discord button again."
     )
+
+
+class RequestMessageModal(
+    discord.ui.Modal,
+    title="Request ChimeBuddy",
+):
+    requester_message = discord.ui.TextInput(
+        label="Optional message",
+        placeholder=(
+            "Tell us something about your channel or "
+            "why you would like to use ChimeBuddy."
+        ),
+        style=discord.TextStyle.paragraph,
+        required=False,
+        max_length=500,
+    )
+
+    def __init__(
+        self,
+        *,
+        controller: "DiscordOnboardingController",
+        authorization: AccountLinkAuthorization,
+        confirmation_view: "AccountConfirmationView",
+        confirmation_interaction: discord.Interaction,
+    ) -> None:
+        super().__init__()
+
+        self.controller = controller
+        self.authorization = authorization
+        self.confirmation_view = confirmation_view
+        self.confirmation_interaction = (
+            confirmation_interaction
+        )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ) -> None:
+        message = self.requester_message.value.strip()
+
+        succeeded = await self.controller.finalize_request(
+            interaction,
+            self.authorization,
+            requester_message=message or None,
+        )
+
+        if not succeeded:
+            self.confirmation_view.release()
+            return
+
+        self.confirmation_view.stop()
+
+        try:
+            await (
+                self.confirmation_interaction
+                .edit_original_response(
+                    content=(
+                        "**Request submitted successfully.**\n\n"
+                        "You can see the final information "
+                        "in the confirmation message below."
+                    ),
+                    embed=None,
+                    view=None,
+                )
+            )
+        except discord.HTTPException:
+            logger.warning(
+                "Could not update the account "
+                "confirmation message after submission."
+            )
+
+
+class AccountConfirmationView(discord.ui.View):
+    """Temporary confirmation buttons after Twitch auth."""
+
+    def __init__(
+        self,
+        *,
+        controller: "DiscordOnboardingController",
+        authorization: AccountLinkAuthorization,
+    ) -> None:
+        remaining_seconds = max(
+            1,
+            authorization.confirmation_expires_at
+            - int(time.time()),
+        )
+
+        super().__init__(
+            timeout=float(remaining_seconds)
+        )
+
+        self.controller = controller
+        self.authorization = authorization
+        self.expected_discord_user_id = (
+            authorization.discord_user_id
+        )
+        self._claimed = False
+
+    def release(self) -> None:
+        """Allow another submission after a recoverable error."""
+
+        self._claimed = False
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+        if (
+            str(interaction.user.id)
+            == self.expected_discord_user_id
+        ):
+            return True
+
+        await interaction.response.send_message(
+            "This account confirmation belongs to "
+            "another Discord user.",
+            ephemeral=True,
+        )
+
+        return False
+
+    @discord.ui.button(
+        label="Continue to request",
+        style=discord.ButtonStyle.success,
+        custom_id=CONFIRM_BUTTON_CUSTOM_ID,
+        emoji="✅",
+    )
+    async def continue_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        if self._claimed:
+            await interaction.response.send_message(
+                "This request is already being submitted.",
+                ephemeral=True,
+            )
+            return
+
+        self._claimed = True
+
+        await interaction.response.send_modal(
+            RequestMessageModal(
+                controller=self.controller,
+                authorization=self.authorization,
+                confirmation_view=self,
+                confirmation_interaction=interaction,
+            )
+        )
+
+    @discord.ui.button(
+        label="Use another Twitch account",
+        style=discord.ButtonStyle.secondary,
+        custom_id=CANCEL_BUTTON_CUSTOM_ID,
+        emoji="↩️",
+    )
+    async def different_account_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        if self._claimed:
+            await interaction.response.send_message(
+                "This request is already being submitted.",
+                ephemeral=True,
+            )
+            return
+
+        self._claimed = True
+
+        try:
+            await (
+                self.controller.account_linking_service
+                .cancel_authorization(
+                    self.authorization
+                )
+            )
+        except Exception:
+            self._claimed = False
+
+            logger.exception(
+                "Failed to cancel account authorization "
+                "for Discord user %s.",
+                interaction.user.id,
+            )
+
+            await interaction.response.send_message(
+                "ChimeBuddy could not cancel this "
+                "authorization. Please try again.",
+                ephemeral=True,
+            )
+            return
+
+        self.stop()
+
+        await interaction.response.edit_message(
+            content=(
+                "The Twitch authorization was cancelled.\n\n"
+                "Press the button on the onboarding panel "
+                "when you are ready to connect another "
+                "Twitch account."
+            ),
+            embed=None,
+            view=None,
+        )
+
+    async def on_timeout(self) -> None:
+        if self._claimed:
+            return
+
+        try:
+            await (
+                self.controller.account_linking_service
+                .cancel_authorization(
+                    self.authorization
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Failed to expire an unused account "
+                "confirmation for Discord user %s.",
+                self.expected_discord_user_id,
+            )
 
 
 class OnboardingView(discord.ui.View):
@@ -233,7 +514,7 @@ class DiscordOnboardingController:
 
             await interaction.edit_original_response(
                 content=(
-                    "You already have a Chimebuddy "
+                    "You already have a ChimeBuddy "
                     "request.\n\n"
                     f"Request ID: `{request.request_id}`\n"
                     "Current status: "
@@ -280,14 +561,15 @@ class DiscordOnboardingController:
             return
 
         await interaction.edit_original_response(
-            content=render_challenge(challenge)
+            content=render_challenge(challenge),
+            embed=None,
+            view=None,
         )
 
         try:
-            result = (
-                await self.account_linking_service.complete(
-                    challenge
-                )
+            authorization = (
+                await self.account_linking_service
+                .authenticate(challenge)
             )
 
         except DeviceAuthorizationDeniedError:
@@ -309,6 +591,76 @@ class DiscordOnboardingController:
             )
             return
 
+        except BlacklistedIdentityError:
+            await interaction.edit_original_response(
+                content=(
+                    "This Discord or Twitch account "
+                    "cannot submit a ChimeBuddy request."
+                )
+            )
+            return
+
+        except Exception:
+            logger.exception(
+                "Twitch authentication failed for "
+                "Discord user %s.",
+                interaction.user.id,
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "Twitch authorization could not be "
+                    "completed. Please try again later."
+                )
+            )
+            return
+
+        confirmation_view = AccountConfirmationView(
+            controller=self,
+            authorization=authorization,
+        )
+
+        await interaction.edit_original_response(
+            content=None,
+            embed=build_confirmation_embed(
+                authorization,
+                interaction.user,
+            ),
+            view=confirmation_view,
+        )
+
+    async def finalize_request(
+        self,
+        interaction: discord.Interaction,
+        authorization: AccountLinkAuthorization,
+        *,
+        requester_message: str | None,
+    ) -> bool:
+        if (
+            str(interaction.user.id)
+            != authorization.discord_user_id
+        ):
+            await interaction.response.send_message(
+                "This Twitch authorization belongs to "
+                "another Discord user.",
+                ephemeral=True,
+            )
+            return False
+
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True,
+        )
+
+        try:
+            result = (
+                await self.account_linking_service
+                .confirm_and_create_request(
+                    authorization,
+                    requester_message=requester_message,
+                )
+            )
+
         except AccountLinkIdentityConflictError as exc:
             await interaction.edit_original_response(
                 content=(
@@ -316,7 +668,7 @@ class DiscordOnboardingController:
                     f"{exc}"
                 )
             )
-            return
+            return False
 
         except BlacklistedIdentityError:
             await interaction.edit_original_response(
@@ -325,7 +677,7 @@ class DiscordOnboardingController:
                     "ChimeBuddy request."
                 )
             )
-            return
+            return False
 
         except OpenBroadcasterRequestError:
             await self._assign_linked_role(
@@ -339,22 +691,22 @@ class DiscordOnboardingController:
                     "ChimeBuddy request."
                 )
             )
-            return
+            return True
 
         except Exception:
             logger.exception(
-                "Discord account linking failed for "
+                "Request creation failed for Discord "
                 "user %s.",
                 interaction.user.id,
             )
 
             await interaction.edit_original_response(
                 content=(
-                    "Twitch authorization could not be "
-                    "completed. Please try again later."
+                    "ChimeBuddy could not submit your "
+                    "request. Please try again."
                 )
             )
-            return
+            return False
 
         if self.review_controller is not None:
             try:
@@ -373,15 +725,16 @@ class DiscordOnboardingController:
             interaction
         )
 
-        role_message = (
-            f"The {linked_role.mention} role was added."
-            if linked_role is not None
-            else (
+        if linked_role is not None:
+            role_message = (
+                f"The {linked_role.mention} role was added."
+            )
+        else:
+            role_message = (
                 "Your accounts are linked, but Discord "
-                f"could not add the {linked_role.mention} role. "
+                "could not add the **Twitch Linked** role. "
                 "The developer has been notified."
             )
-        )
 
         await interaction.edit_original_response(
             content=(
@@ -395,6 +748,8 @@ class DiscordOnboardingController:
                 "has been reviewed."
             )
         )
+
+        return True
 
     async def _assign_linked_role(
         self,
