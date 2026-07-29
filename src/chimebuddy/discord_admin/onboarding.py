@@ -36,8 +36,8 @@ def build_onboarding_embed() -> discord.Embed:
             "Connect your Discord account to your Twitch "
             "account and submit a request to use "
             "ChimeBuddy.\n\n"
-            "**Before you begin:**\n"
-            "• Sign in with your broadcaster account.\n"
+            "**Before you begin a few info:**\n"
+            "• You will need to sign in with your broadcaster account.\n"
             "• Twitch will ask for the `channel:bot` "
             "permission.\n"
             "• Your authorization code will only be "
@@ -45,7 +45,7 @@ def build_onboarding_embed() -> discord.Embed:
             "• Your request will require developer "
             "approval."
         ),
-        color=discord.Color.purple(),
+        color=discord.Color.orange(),
     )
 
     embed.set_footer(
@@ -87,7 +87,7 @@ class OnboardingView(discord.ui.View):
 
     @discord.ui.button(
         label="Connect Twitch & Request ChimeBuddy",
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.success,
         custom_id=CONNECT_BUTTON_CUSTOM_ID,
         emoji="🔗",
     )
@@ -327,16 +327,16 @@ class DiscordOnboardingController:
             )
             return
 
-        role_assigned = await self._assign_linked_role(
+        linked_role = await self._assign_linked_role(
             interaction
         )
 
         role_message = (
-            "The **Twitch Linked** role was added."
-            if role_assigned
+            f"The {linked_role.mention} role was added."
+            if linked_role is not None
             else (
                 "Your accounts are linked, but Discord "
-                "could not add the Twitch Linked role. "
+                f"could not add the {linked_role.mention} role. "
                 "The developer has been notified."
             )
         )
@@ -357,7 +357,7 @@ class DiscordOnboardingController:
     async def _assign_linked_role(
         self,
         interaction: discord.Interaction,
-    ) -> bool:
+    ) -> discord.Role | None:
         if (
             interaction.guild is None
             or not isinstance(
@@ -365,7 +365,7 @@ class DiscordOnboardingController:
                 discord.Member,
             )
         ):
-            return False
+            return None
 
         try:
             role = await self._get_or_create_linked_role(
@@ -379,7 +379,7 @@ class DiscordOnboardingController:
                 ),
             )
 
-            return True
+            return role
 
         except discord.HTTPException:
             logger.exception(
@@ -387,7 +387,7 @@ class DiscordOnboardingController:
                 "to Discord user %s.",
                 interaction.user.id,
             )
-            return False
+            return None
 
     @staticmethod
     async def _get_or_create_linked_role(
