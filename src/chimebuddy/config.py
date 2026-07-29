@@ -116,6 +116,12 @@ class Settings:
         if self.discord_guild_id is None:
             missing.append("DISCORD_GUILD_ID")
 
+        if not self.twitch_client_id:
+            missing.append("TWITCH_CLIENT_ID")
+
+        if not self.twitch_client_secret:
+            missing.append("TWITCH_CLIENT_SECRET")
+
         if missing:
             raise ConfigurationError(
                 "Missing Discord configuration: "

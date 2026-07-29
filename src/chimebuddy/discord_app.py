@@ -1,6 +1,8 @@
 import asyncio
 import logging
 
+import aiohttp
+
 from chimebuddy import __version__
 from chimebuddy.config import (
     ConfigurationError,
@@ -11,11 +13,29 @@ from chimebuddy.database import Database
 from chimebuddy.discord_admin.client import (
     ChimeBuddyDiscordClient,
 )
+from chimebuddy.discord_admin.onboarding import (
+    DiscordOnboardingController,
+)
 from chimebuddy.discord_admin.status_service import (
     DiscordAdminStatusService,
 )
 from chimebuddy.repositories import (
+    AccountLinkCompletionRepository,
+    AccountLinkSessionRepository,
+    BroadcasterBlacklistRepository,
+    BroadcasterRequestRepository,
     IdentityRepository,
+    OAuthCredentialRepository,
+)
+from chimebuddy.services import (
+    AccountLinkingService,
+    OnboardingService,
+)
+from chimebuddy.twitch.device_authorization import (
+    TwitchDeviceAuthorizationClient,
+)
+from chimebuddy.twitch.oauth_client import (
+    TwitchOAuthClient,
 )
 
 
@@ -51,20 +71,110 @@ async def run(settings: Settings) -> None:
             "DISCORD_GUILD_ID is missing."
         )
 
+    if settings.twitch_client_id is None:
+        raise ConfigurationError(
+            "TWITCH_CLIENT_ID is missing."
+        )
+
+    if settings.twitch_client_secret is None:
+        raise ConfigurationError(
+            "TWITCH_CLIENT_SECRET is missing."
+        )
+
+    identity_repository = IdentityRepository(
+        database
+    )
+    credential_repository = (
+        OAuthCredentialRepository(database)
+    )
+    session_repository = (
+        AccountLinkSessionRepository(database)
+    )
+    blacklist_repository = (
+        BroadcasterBlacklistRepository(database)
+    )
+    request_repository = (
+        BroadcasterRequestRepository(database)
+    )
+
     status_service = DiscordAdminStatusService(
-        IdentityRepository(database)
+        identity_repository
     )
 
-    client = ChimeBuddyDiscordClient(
-        developer_discord_user_id=(
-            settings.developer_discord_user_id
+    onboarding_service = OnboardingService(
+        identity_repository=identity_repository,
+        credential_repository=(
+            credential_repository
         ),
-        discord_guild_id=settings.discord_guild_id,
-        status_service=status_service,
+        request_repository=request_repository,
+        blacklist_repository=(
+            blacklist_repository
+        ),
     )
 
-    async with client:
-        await client.start(settings.discord_token)
+    async with aiohttp.ClientSession() as session:
+        device_client = (
+            TwitchDeviceAuthorizationClient(
+                session=session,
+                client_id=settings.twitch_client_id,
+            )
+        )
+
+        oauth_client = TwitchOAuthClient(
+            session=session,
+            client_id=settings.twitch_client_id,
+            client_secret=(
+                settings.twitch_client_secret
+            ),
+        )
+
+        account_linking_service = (
+            AccountLinkingService(
+                device_client=device_client,
+                oauth_client=oauth_client,
+                identity_repository=(
+                    identity_repository
+                ),
+                session_repository=(
+                    session_repository
+                ),
+                completion_repository=(
+                    AccountLinkCompletionRepository(
+                        database
+                    )
+                ),
+                blacklist_repository=(
+                    blacklist_repository
+                ),
+                onboarding_service=(
+                    onboarding_service
+                ),
+            )
+        )
+
+        onboarding_controller = (
+            DiscordOnboardingController(
+                account_linking_service
+            )
+        )
+
+        client = ChimeBuddyDiscordClient(
+            developer_discord_user_id=(
+                settings.developer_discord_user_id
+            ),
+            discord_guild_id=(
+                settings.discord_guild_id
+            ),
+            status_service=status_service,
+            onboarding_controller=(
+                onboarding_controller
+            ),
+        )
+
+        async with client:
+            await client.start(
+                settings.discord_token
+            )
 
 
 def main() -> None:
