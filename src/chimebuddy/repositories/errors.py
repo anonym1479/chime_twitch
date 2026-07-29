@@ -31,3 +31,6 @@ class ActiveBlacklistEntryError(RepositoryError):
 
 class BroadcasterPanelExistsError(RepositoryError):
     """Raised when a broadcaster request already has a private panel."""
+
+class AccountLinkIdentityConflictError(RepositoryError):
+    """Raised when Discord or Twitch is linked to another identity."""
