@@ -141,6 +141,12 @@ class ChimeBuddyDiscordClient(discord.Client):
             self.add_view(
                 self.onboarding_controller.create_view()
             )
+            
+        if self.review_controller is not None:
+                    await (
+                        self.review_controller
+                        .restore_review_messages(self)
+                    )
 
         commands = await self.command_tree.sync(
             guild=self.guild_object

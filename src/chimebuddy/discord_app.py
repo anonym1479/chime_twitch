@@ -31,6 +31,7 @@ from chimebuddy.repositories import (
 from chimebuddy.services import (
     AccountLinkingService,
     OnboardingService,
+    ReviewDecisionService,
 )
 from chimebuddy.twitch.device_authorization import (
     TwitchDeviceAuthorizationClient,
@@ -104,11 +105,24 @@ async def run(settings: Settings) -> None:
     settings_repository = (
         AppSettingsRepository(database)
     )
-    review_controller = ( 
+
+    review_decision_service = (
+        ReviewDecisionService(
+            request_repository
+        )
+    )
+
+    review_controller = (
         DiscordReviewController(
             settings_repository=settings_repository,
             request_repository=request_repository,
-            identity_repository=identity_repository
+            identity_repository=identity_repository,
+            decision_service=(
+                review_decision_service
+            ),
+            developer_discord_user_id=(
+                settings.developer_discord_user_id
+            ),
         )
     )
 

@@ -11,6 +11,7 @@ from chimebuddy.models import (
     OnboardingRequestEvent,
 )
 from chimebuddy.repositories.errors import (
+    ActiveBlacklistEntryError,
     OpenBroadcasterRequestError,
 )
 
@@ -388,6 +389,7 @@ class BroadcasterRequestRepository:
                     parameters.append(actor_id)
 
                 if target_status in {
+                    BroadcasterRequestStatus.APPROVING,
                     BroadcasterRequestStatus.REJECTED,
                     BroadcasterRequestStatus.BLACKLISTED,
                 }:
@@ -441,6 +443,165 @@ class BroadcasterRequestRepository:
 
                 await connection.commit()
                 return True
+
+            except Exception:
+                await connection.rollback()
+                raise
+
+    async def blacklist_pending(
+        self,
+        request_id: int,
+        *,
+        actor_discord_user_id: str,
+        internal_reason: str,
+        requester_message: str | None = None,
+    ) -> bool:
+        """
+        Atomically blacklist both identities and close
+        a pending broadcaster request.
+        """
+
+        actor_id = self._required_text(
+            actor_discord_user_id,
+            "actor_discord_user_id",
+        )
+        internal = self._required_text(
+            internal_reason,
+            "internal_reason",
+        )
+        requester_text = self._optional_text(
+            requester_message
+        )
+
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                row = await self._fetch_request_row(
+                    connection,
+                    int(request_id),
+                )
+
+                if row is None:
+                    await connection.rollback()
+                    return False
+
+                current_status = BroadcasterRequestStatus(
+                    row["status"]
+                )
+
+                if (
+                    current_status
+                    is not BroadcasterRequestStatus.PENDING
+                ):
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    INSERT INTO broadcaster_blacklist (
+                        discord_user_id,
+                        twitch_user_id,
+                        internal_reason,
+                        requester_message,
+                        created_by_discord_user_id,
+                        active
+                    )
+                    VALUES (?, ?, ?, ?, ?, 1)
+                    """,
+                    (
+                        row["discord_user_id"],
+                        row["twitch_user_id"],
+                        internal,
+                        requester_text,
+                        actor_id,
+                    ),
+                )
+
+                blacklist_id = cursor.lastrowid
+                await cursor.close()
+
+                if blacklist_id is None:
+                    raise RuntimeError(
+                        "SQLite did not return a "
+                        "blacklist ID."
+                    )
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcaster_requests
+                    SET
+                        status = 'blacklisted',
+                        decision_reason = ?,
+                        decided_by_discord_user_id = ?,
+                        decided_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE request_id = ?
+                      AND status = 'pending'
+                    """,
+                    (
+                        requester_text,
+                        actor_id,
+                        int(request_id),
+                    ),
+                )
+
+                changed = cursor.rowcount == 1
+                await cursor.close()
+
+                if not changed:
+                    await connection.rollback()
+                    return False
+
+                await self._insert_event(
+                    connection,
+                    request_id=int(request_id),
+                    event_type="request_blacklisted",
+                    from_status=(
+                        BroadcasterRequestStatus.PENDING
+                    ),
+                    to_status=(
+                        BroadcasterRequestStatus.BLACKLISTED
+                    ),
+                    actor_discord_user_id=actor_id,
+                    details_json=json.dumps(
+                        {
+                            "blacklist_id": int(
+                                blacklist_id
+                            )
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+
+                await connection.commit()
+                return True
+
+            except aiosqlite.IntegrityError as exc:
+                await connection.rollback()
+
+                error_text = str(exc)
+
+                if (
+                    "broadcaster_blacklist.discord_user_id"
+                    in error_text
+                    or
+                    "broadcaster_blacklist.twitch_user_id"
+                    in error_text
+                    or
+                    "broadcaster_blacklist_active_discord_idx"
+                    in error_text
+                    or
+                    "broadcaster_blacklist_active_twitch_idx"
+                    in error_text
+                ):
+                    raise ActiveBlacklistEntryError(
+                        "This Discord or Twitch identity "
+                        "is already actively blacklisted."
+                    ) from exc
+
+                raise
 
             except Exception:
                 await connection.rollback()

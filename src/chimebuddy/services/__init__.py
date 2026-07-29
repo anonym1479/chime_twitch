@@ -36,6 +36,12 @@ from chimebuddy.services.account_linking_service import (
     ExistingBroadcasterRequestError,
     AccountLinkAuthorization,
 )
+from chimebuddy.services.review_decision_service import (
+    ReviewDecisionError,
+    ReviewDecisionService,
+    ReviewRequestNotFoundError,
+    ReviewRequestStateError,
+)
 
 __all__ = [
     "ChatGateway",
@@ -64,4 +70,8 @@ __all__ = [
     "LinkSessionCompletionError",
     "ExistingBroadcasterRequestError",
     "AccountLinkAuthorization",
+    "ReviewDecisionError",
+    "ReviewDecisionService",
+    "ReviewRequestNotFoundError",
+    "ReviewRequestStateError",
 ]

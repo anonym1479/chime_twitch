@@ -18,6 +18,9 @@ from chimebuddy.repositories import (
     BroadcasterRequestRepository,
     IdentityRepository,
 )
+from chimebuddy.services import (
+    ReviewDecisionService,
+)
 
 
 class FakeChannel:
@@ -111,6 +114,12 @@ class DiscordReviewTests(
             identity_repository=(
                 self.identity_repository
             ),
+            decision_service=(
+                ReviewDecisionService(
+                    self.request_repository
+                )
+            ),
+            developer_discord_user_id=999,
         )
 
     async def test_embed_contains_identity_details(
@@ -169,6 +178,9 @@ class DiscordReviewTests(
         self.assertEqual(
             len(channel.sent_messages),
             1,
+        )
+        self.assertIsNotNone(
+            channel.sent_messages[0]["view"]
         )
         self.assertEqual(
             updated.review_guild_id,
