@@ -306,6 +306,10 @@ async def run(settings: Settings) -> None:
             )
         )
 
+        broadcaster_panel_controller.bind_onboarding_controller(
+            onboarding_controller
+        )
+
         client = ChimeBuddyDiscordClient(
             developer_discord_user_id=(
                 settings.developer_discord_user_id

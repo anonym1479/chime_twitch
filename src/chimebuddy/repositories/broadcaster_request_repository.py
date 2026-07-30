@@ -739,6 +739,122 @@ class BroadcasterRequestRepository:
                 await connection.rollback()
                 raise
 
+    async def complete_broadcaster_reauthorization(
+        self,
+        request_id: int,
+        *,
+        twitch_user_id: str,
+        discord_user_id: str,
+    ) -> bool:
+        """
+        Restore a reauthorized request and broadcaster atomically.
+        """
+
+        twitch_id = self._required_text(
+            twitch_user_id,
+            "twitch_user_id",
+        )
+        discord_id = self._required_text(
+            discord_user_id,
+            "discord_user_id",
+        )
+
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                cursor = await connection.execute(
+                    """
+                    SELECT status
+                    FROM broadcaster_requests
+                    WHERE request_id = ?
+                      AND twitch_user_id = ?
+                      AND discord_user_id = ?
+                    """,
+                    (
+                        int(request_id),
+                        twitch_id,
+                        discord_id,
+                    ),
+                )
+
+                row = await cursor.fetchone()
+                await cursor.close()
+
+                if (
+                    row is None
+                    or row["status"]
+                    != BroadcasterRequestStatus
+                    .REAUTHORIZATION_REQUIRED.value
+                ):
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcasters
+                    SET
+                        enabled = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE twitch_user_id = ?
+                      AND owner_discord_user_id = ?
+                    """,
+                    (twitch_id, discord_id),
+                )
+
+                broadcaster_found = cursor.rowcount == 1
+                await cursor.close()
+
+                if not broadcaster_found:
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcaster_requests
+                    SET
+                        status = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE request_id = ?
+                      AND status = ?
+                    """,
+                    (
+                        BroadcasterRequestStatus.ACTIVE.value,
+                        int(request_id),
+                        BroadcasterRequestStatus
+                        .REAUTHORIZATION_REQUIRED.value,
+                    ),
+                )
+
+                changed = cursor.rowcount == 1
+                await cursor.close()
+
+                if not changed:
+                    await connection.rollback()
+                    return False
+
+                await self._insert_event(
+                    connection,
+                    request_id=int(request_id),
+                    event_type=(
+                        "broadcaster_reauthorization_completed"
+                    ),
+                    from_status=(
+                        BroadcasterRequestStatus
+                        .REAUTHORIZATION_REQUIRED
+                    ),
+                    to_status=BroadcasterRequestStatus.ACTIVE,
+                    actor_discord_user_id=discord_id,
+                    details_json="{}",
+                )
+
+                await connection.commit()
+                return True
+
+            except Exception:
+                await connection.rollback()
+                raise
+
     async def list_events(
         self,
         request_id: int,

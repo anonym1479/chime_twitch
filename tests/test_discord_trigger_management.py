@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from chimebuddy.discord_admin.broadcaster_panel import (
+    RECONNECT_TWITCH_BUTTON_CUSTOM_ID,
     TITLE_TRIGGERS_BUTTON_CUSTOM_ID,
     BroadcasterManagementView,
 )
@@ -15,6 +16,7 @@ from chimebuddy.discord_admin.trigger_management import (
     parse_trigger_id,
 )
 from chimebuddy.models import (
+    BroadcasterRequestStatus,
     Trigger,
     TriggerMatchType,
 )
@@ -337,6 +339,9 @@ class DiscordTriggerManagementTests(
         status = SimpleNamespace(
             twitch_user_id="456",
             broadcaster_enabled=True,
+            request_status=(
+                BroadcasterRequestStatus.ACTIVE
+            ),
         )
         controller = SimpleNamespace()
 
@@ -355,6 +360,33 @@ class DiscordTriggerManagementTests(
             TITLE_TRIGGERS_BUTTON_CUSTOM_ID,
             custom_ids,
         )
+
+    def test_reauthorization_enables_reconnect_button(
+        self,
+    ) -> None:
+        status = SimpleNamespace(
+            twitch_user_id="456",
+            broadcaster_enabled=False,
+            request_status=(
+                BroadcasterRequestStatus
+                .REAUTHORIZATION_REQUIRED
+            ),
+        )
+
+        view = BroadcasterManagementView(
+            SimpleNamespace(),
+            status,
+        )
+
+        reconnect_button = next(
+            child
+            for child in view.children
+            if child.custom_id
+            == RECONNECT_TWITCH_BUTTON_CUSTOM_ID
+        )
+
+        self.assertFalse(reconnect_button.disabled)
+        self.assertTrue(view.lifecycle_button.disabled)
 
 
 class DiscordTriggerManagementControllerTests(

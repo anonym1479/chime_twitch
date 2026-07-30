@@ -2,6 +2,7 @@ import logging
 
 import discord
 
+from chimebuddy.models import BroadcasterRequestStatus
 from chimebuddy.services import (
     BroadcasterLifecycleError,
     BroadcasterLifecycleService,
@@ -24,6 +25,9 @@ LIFECYCLE_BUTTON_CUSTOM_ID = (
 TITLE_TRIGGERS_BUTTON_CUSTOM_ID = (
     "chimebuddy:broadcaster:title_triggers"
 )
+RECONNECT_TWITCH_BUTTON_CUSTOM_ID = (
+    "chimebuddy:broadcaster:reconnect_twitch"
+)
 
 
 def can_manage_broadcaster_panel(
@@ -42,7 +46,20 @@ def can_manage_broadcaster_panel(
 def build_broadcaster_management_embed(
     status: BroadcasterPanelStatus,
 ) -> discord.Embed:
-    if status.broadcaster_enabled:
+    reauthorization_required = (
+        status.request_status
+        is BroadcasterRequestStatus
+        .REAUTHORIZATION_REQUIRED
+    )
+
+    if reauthorization_required:
+        state_text = "🔴 Twitch reconnection required"
+        state_description = (
+            "Twitch authorization is no longer valid. "
+            "Reconnect Twitch to safely resume ChimeBuddy."
+        )
+        color = discord.Color.red()
+    elif status.broadcaster_enabled:
         state_text = "🟢 Active"
         state_description = (
             "ChimeBuddy is enabled for this broadcaster."
@@ -56,7 +73,12 @@ def build_broadcaster_management_embed(
         )
         color = discord.Color.orange()
 
-    if status.credential_stored:
+    if reauthorization_required:
+        authorization_text = (
+            "❌ Reauthorization required — use "
+            "**Reconnect Twitch** below."
+        )
+    elif status.credential_stored:
         if status.credential_expires_at is None:
             authorization_text = "✅ Stored"
         else:
@@ -136,7 +158,14 @@ def build_broadcaster_management_embed(
             "🔄 **Refresh status** — reload this panel.\n\n"
             "📝 **Title triggers** — privately list and "
             "manage stream-title triggers.\n\n"
-            "Channel-management controls will be added "
+            + (
+                "🔗 **Reconnect Twitch** — renew the "
+                "authorization and restore this channel."
+                "\n\n"
+                if reauthorization_required
+                else ""
+            )
+            + "Channel-management controls will be added "
             "here later."
         ),
         inline=False,
@@ -166,8 +195,23 @@ class BroadcasterManagementView(discord.ui.View):
         self.broadcaster_enabled = (
             status.broadcaster_enabled
         )
+        self.reauthorization_required = (
+            status.request_status
+            is BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED
+        )
 
-        if self.broadcaster_enabled:
+        if self.reauthorization_required:
+            self.lifecycle_button.label = (
+                "Twitch reconnection required"
+            )
+            self.lifecycle_button.style = (
+                discord.ButtonStyle.secondary
+            )
+            self.lifecycle_button.emoji = "🔒"
+            self.lifecycle_button.disabled = True
+            self.reconnect_twitch_button.disabled = False
+        elif self.broadcaster_enabled:
             self.lifecycle_button.label = (
                 "Pause ChimeBuddy"
             )
@@ -183,6 +227,9 @@ class BroadcasterManagementView(discord.ui.View):
                 discord.ButtonStyle.success
             )
             self.lifecycle_button.emoji = "▶️"
+
+        if not self.reauthorization_required:
+            self.reconnect_twitch_button.disabled = True
 
     @discord.ui.button(
         label="Refresh status",
@@ -231,6 +278,22 @@ class BroadcasterManagementView(discord.ui.View):
         button: discord.ui.Button,
     ) -> None:
         await self.controller.handle_title_triggers(
+            interaction,
+            self.twitch_user_id,
+        )
+
+    @discord.ui.button(
+        label="Reconnect Twitch",
+        style=discord.ButtonStyle.success,
+        emoji="🔗",
+        custom_id=RECONNECT_TWITCH_BUTTON_CUSTOM_ID,
+    )
+    async def reconnect_twitch_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.handle_reconnect_twitch(
             interaction,
             self.twitch_user_id,
         )
@@ -318,6 +381,7 @@ class DiscordBroadcasterPanelController:
         panel_repository,
         developer_discord_user_id: int,
         trigger_management_controller=None,
+        onboarding_controller=None,
     ) -> None:
         self.status_service = status_service
         self.lifecycle_service = lifecycle_service
@@ -325,9 +389,16 @@ class DiscordBroadcasterPanelController:
         self.trigger_management_controller = (
             trigger_management_controller
         )
+        self.onboarding_controller = onboarding_controller
         self.developer_discord_user_id = int(
             developer_discord_user_id
         )
+
+    def bind_onboarding_controller(
+        self,
+        onboarding_controller,
+    ) -> None:
+        self.onboarding_controller = onboarding_controller
 
     def create_view(
         self,
@@ -482,6 +553,19 @@ class DiscordBroadcasterPanelController:
         )
 
         if status is None:
+            return
+
+        if (
+            status.request_status
+            is BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED
+        ):
+            await interaction.response.send_message(
+                "Twitch must be reconnected before "
+                "ChimeBuddy can be resumed. Use the "
+                "**Reconnect Twitch** button.",
+                ephemeral=True,
+            )
             return
 
         if interaction.message is None:
@@ -663,6 +747,42 @@ class DiscordBroadcasterPanelController:
                 interaction,
                 twitch_user_id,
             )
+        )
+
+    async def handle_reconnect_twitch(
+        self,
+        interaction: discord.Interaction,
+        twitch_user_id: str,
+    ) -> None:
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
+
+        if status is None:
+            return
+
+        if (
+            status.request_status
+            is not BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED
+        ):
+            await interaction.response.send_message(
+                "This broadcaster does not currently "
+                "need Twitch reauthorization.",
+                ephemeral=True,
+            )
+            return
+
+        if self.onboarding_controller is None:
+            await interaction.response.send_message(
+                "Twitch reconnection is not configured.",
+                ephemeral=True,
+            )
+            return
+
+        await self.onboarding_controller.handle_connect(
+            interaction
         )
 
     async def _load_authorized_status(

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from chimebuddy.models import (
     AccountLinkSession,
     BroadcasterRequest,
+    BroadcasterRequestStatus,
     DiscordAccount,
     OAuthCredential,
     OAuthCredentialKind,
@@ -98,6 +99,10 @@ class AccountLinkChallenge:
     authorization: DeviceAuthorization = field(
         repr=False
     )
+    existing_request: BroadcasterRequest | None = field(
+        default=None,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +120,10 @@ class AccountLinkAuthorization:
     credential: OAuthCredential = field(
         repr=False
     )
+    existing_request: BroadcasterRequest | None = field(
+        default=None,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +133,7 @@ class AccountLinkResult:
     twitch_user_id: str
     twitch_login: str
     request: BroadcasterRequest
+    was_reauthorization: bool = False
 
 
 class AccountLinkingService:
@@ -213,7 +223,12 @@ class AccountLinkingService:
             )
         )
 
-        if existing_request is not None:
+        if (
+            existing_request is not None
+            and existing_request.status
+            is not BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED
+        ):
             raise ExistingBroadcasterRequestError(
                 existing_request
             )
@@ -255,6 +270,7 @@ class AccountLinkingService:
             expires_at=expires_at,
             requested_scopes=self.scopes,
             authorization=authorization,
+            existing_request=existing_request,
         )
 
     async def authenticate(
@@ -287,6 +303,20 @@ class AccountLinkingService:
                 raise LinkAuthorizationValidationError(
                     "Twitch did not return a valid "
                     "user identity."
+                )
+
+            if (
+                challenge.existing_request is not None
+                and (
+                    challenge.existing_request
+                    .twitch_user_id
+                    != twitch_user_id
+                )
+            ):
+                raise LinkAuthorizationValidationError(
+                    "Sign in with the Twitch account "
+                    "already connected to this ChimeBuddy "
+                    "request."
                 )
 
             blacklist_entry = (
@@ -355,6 +385,9 @@ class AccountLinkingService:
                 ),
                 twitch_account=twitch_account,
                 credential=credential,
+                existing_request=(
+                    challenge.existing_request
+                ),
             )
 
         except DeviceAuthorizationExpiredError:
@@ -409,17 +442,33 @@ class AccountLinkingService:
             )
             raise
 
-        request = (
-            await self.onboarding_service.create_request(
-                twitch_user_id=(
-                    authorization.twitch_user_id
-                ),
-                discord_user_id=(
-                    authorization.discord_user_id
-                ),
-                requester_message=requester_message,
+        existing_request = authorization.existing_request
+
+        if existing_request is None:
+            request = (
+                await self.onboarding_service.create_request(
+                    twitch_user_id=(
+                        authorization.twitch_user_id
+                    ),
+                    discord_user_id=(
+                        authorization.discord_user_id
+                    ),
+                    requester_message=requester_message,
+                )
             )
-        )
+        else:
+            request = (
+                await self.onboarding_service
+                .complete_reauthorization(
+                    existing_request.request_id,
+                    twitch_user_id=(
+                        authorization.twitch_user_id
+                    ),
+                    discord_user_id=(
+                        authorization.discord_user_id
+                    ),
+                )
+            )
 
         return AccountLinkResult(
             session_id=authorization.session_id,
@@ -431,6 +480,9 @@ class AccountLinkingService:
             ),
             twitch_login=authorization.twitch_login,
             request=request,
+            was_reauthorization=(
+                existing_request is not None
+            ),
         )
 
     async def cancel_authorization(

@@ -75,8 +75,16 @@ def build_confirmation_embed(
     authorization: AccountLinkAuthorization,
     discord_user: discord.abc.User,
 ) -> discord.Embed:
+    is_reauthorization = (
+        authorization.existing_request is not None
+    )
+
     embed = discord.Embed(
-        title="Check your account information",
+        title=(
+            "Confirm Twitch reconnection"
+            if is_reauthorization
+            else "Check your account information"
+        ),
         description=(
             "Twitch authorization was successful.\n\n"
             "Please confirm that these are the accounts "
@@ -106,9 +114,17 @@ def build_confirmation_embed(
     embed.add_field(
         name="Next step",
         value=(
-            "Press **Continue to request** to add an "
-            "optional message and submit your request.\n\n"
-            "If the Twitch account is incorrect, choose "
+            (
+                "Press **Reconnect Twitch** to restore "
+                "your existing ChimeBuddy access.\n\n"
+                if is_reauthorization
+                else (
+                    "Press **Continue to request** to add "
+                    "an optional message and submit your "
+                    "request.\n\n"
+                )
+            )
+            + "If the Twitch account is incorrect, choose "
             "**Use another Twitch account**."
         ),
         inline=False,
@@ -116,8 +132,16 @@ def build_confirmation_embed(
 
     embed.set_footer(
         text=(
-            "Your Twitch credential and ChimeBuddy "
-            "request have not been saved yet."
+            (
+                "Your existing request will keep the "
+                "same request ID and private panel."
+                if is_reauthorization
+                else (
+                    "Your Twitch credential and "
+                    "ChimeBuddy request have not been "
+                    "saved yet."
+                )
+            )
         )
     )
 
@@ -238,6 +262,9 @@ class AccountConfirmationView(discord.ui.View):
         )
         self._claimed = False
 
+        if authorization.existing_request is not None:
+            self.continue_button.label = "Reconnect Twitch"
+
     def release(self) -> None:
         """Allow another submission after a recoverable error."""
 
@@ -280,6 +307,20 @@ class AccountConfirmationView(discord.ui.View):
             return
 
         self._claimed = True
+
+        if self.authorization.existing_request is not None:
+            succeeded = await self.controller.finalize_request(
+                interaction,
+                self.authorization,
+                requester_message=None,
+            )
+
+            if succeeded:
+                self.stop()
+            else:
+                self.release()
+
+            return
 
         await interaction.response.send_modal(
             RequestMessageModal(
@@ -708,7 +749,10 @@ class DiscordOnboardingController:
             )
             return False
 
-        if self.review_controller is not None:
+        if (
+            self.review_controller is not None
+            and not result.was_reauthorization
+        ):
             try:
                 await self.review_controller.publish_request(
                     interaction.client,
@@ -735,6 +779,25 @@ class DiscordOnboardingController:
                 "could not add the **Twitch Linked** role. "
                 "The developer has been notified."
             )
+
+        if result.was_reauthorization:
+            await interaction.edit_original_response(
+                content=(
+                    "**Twitch reconnected successfully!**"
+                    "\n\n"
+                    f"Twitch channel: "
+                    f"`{result.twitch_login}`\n"
+                    f"Request ID: "
+                    f"`{result.request.request_id}`\n"
+                    "Request status: `active`\n\n"
+                    f"{role_message}\n\n"
+                    "ChimeBuddy has been resumed. The "
+                    "Twitch worker will reconnect this "
+                    "channel during its next broadcaster "
+                    "synchronization."
+                )
+            )
+            return True
 
         await interaction.edit_original_response(
             content=(

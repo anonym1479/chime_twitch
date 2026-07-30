@@ -6,6 +6,7 @@ from chimebuddy.database import Database
 from chimebuddy.models import (
     AccountLinkSessionStatus,
     AccountLinkStatus,
+    Broadcaster,
     BroadcasterBlacklistEntry,
     BroadcasterRequestStatus,
     DiscordAccount,
@@ -23,6 +24,7 @@ from chimebuddy.services import (
     AccountLinkingService,
     BlacklistedIdentityError,
     ExistingBroadcasterRequestError,
+    LinkAuthorizationValidationError,
     OnboardingService,
 )
 from chimebuddy.twitch.device_authorization import (
@@ -58,14 +60,23 @@ class FakeDeviceClient:
 class FakeOAuthClient:
     client_id = "test-client-id"
 
+    def __init__(
+        self,
+        *,
+        user_id: str = "456",
+        login: str = "example_streamer",
+    ) -> None:
+        self.user_id = user_id
+        self.login = login
+
     async def validate(
         self,
         access_token: str,
     ) -> TokenValidation:
         return TokenValidation(
             client_id=self.client_id,
-            user_id="456",
-            login="example_streamer",
+            user_id=self.user_id,
+            login=self.login,
             scopes=("channel:bot",),
             expires_in=3600,
         )
@@ -145,9 +156,11 @@ class AccountLinkingServiceTests(
 
         self.device_client = FakeDeviceClient()
 
+        self.oauth_client = FakeOAuthClient()
+
         self.service = AccountLinkingService(
             device_client=self.device_client,
-            oauth_client=FakeOAuthClient(),
+            oauth_client=self.oauth_client,
             identity_repository=(
                 self.identity_repository
             ),
@@ -174,6 +187,41 @@ class AccountLinkingServiceTests(
             username="example_user",
             display_name="Example User",
         )
+
+    async def prepare_reauthorization(self):
+        first_challenge = await self.service.start(
+            self.discord_account
+        )
+        first_result = await self.service.complete(
+            first_challenge
+        )
+
+        await self.request_repository.transition(
+            first_result.request.request_id,
+            expected_statuses=(
+                BroadcasterRequestStatus.PENDING,
+            ),
+            new_status=BroadcasterRequestStatus.ACTIVE,
+            event_type="test_activated",
+        )
+
+        await self.identity_repository.save_broadcaster(
+            Broadcaster(
+                twitch_user_id="456",
+                owner_discord_user_id="123",
+                enabled=True,
+            )
+        )
+
+        await (
+            self.request_repository
+            .require_reauthorization_for_broadcaster(
+                "456",
+                reason="Refresh token rejected.",
+            )
+        )
+
+        return first_result
 
     async def test_start_creates_private_challenge(
         self,
@@ -359,6 +407,75 @@ class AccountLinkingServiceTests(
             self.device_client.start_calls,
             0,
         )
+
+    async def test_reauthorization_reuses_active_request(
+        self,
+    ) -> None:
+        first_result = await self.prepare_reauthorization()
+
+        reconnect_challenge = await self.service.start(
+            self.discord_account
+        )
+        authorization = await self.service.authenticate(
+            reconnect_challenge
+        )
+        result = (
+            await self.service
+            .confirm_and_create_request(authorization)
+        )
+
+        broadcaster = (
+            await self.identity_repository.get_broadcaster(
+                "456"
+            )
+        )
+
+        self.assertTrue(result.was_reauthorization)
+        self.assertEqual(
+            result.request.request_id,
+            first_result.request.request_id,
+        )
+        self.assertEqual(
+            result.request.status,
+            BroadcasterRequestStatus.ACTIVE,
+        )
+        self.assertTrue(broadcaster.enabled)
+
+    async def test_reauthorization_requires_same_twitch_account(
+        self,
+    ) -> None:
+        await self.prepare_reauthorization()
+
+        reconnect_challenge = await self.service.start(
+            self.discord_account
+        )
+
+        self.oauth_client.user_id = "different-user"
+        self.oauth_client.login = "wrong_streamer"
+
+        with self.assertRaises(
+            LinkAuthorizationValidationError
+        ):
+            await self.service.authenticate(
+                reconnect_challenge
+            )
+
+        request = (
+            await self.request_repository
+            .get_open_for_discord("123")
+        )
+        broadcaster = (
+            await self.identity_repository.get_broadcaster(
+                "456"
+            )
+        )
+
+        self.assertEqual(
+            request.status,
+            BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED,
+        )
+        self.assertFalse(broadcaster.enabled)
 
 
 if __name__ == "__main__":

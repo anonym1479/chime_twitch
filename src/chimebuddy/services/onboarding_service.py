@@ -140,6 +140,46 @@ class OnboardingService:
             .get_open_for_discord(discord_id)
         )
 
+    async def complete_reauthorization(
+        self,
+        request_id: int,
+        *,
+        twitch_user_id: str,
+        discord_user_id: str,
+    ) -> BroadcasterRequest:
+        changed = (
+            await self.request_repository
+            .complete_broadcaster_reauthorization(
+                int(request_id),
+                twitch_user_id=self._required_text(
+                    twitch_user_id,
+                    "twitch_user_id",
+                ),
+                discord_user_id=self._required_text(
+                    discord_user_id,
+                    "discord_user_id",
+                ),
+            )
+        )
+
+        if not changed:
+            raise RequestStateConflictError(
+                "This broadcaster is no longer waiting "
+                "for Twitch reauthorization."
+            )
+
+        request = await self.request_repository.get(
+            int(request_id)
+        )
+
+        if request is None:
+            raise OnboardingError(
+                "The reauthorized broadcaster request "
+                "could not be loaded."
+            )
+
+        return request
+
     async def begin_approval(
         self,
         request_id: int,

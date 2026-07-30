@@ -315,6 +315,45 @@ class BroadcasterRequestRepositoryTests(
             .REAUTHORIZATION_REQUIRED,
         )
 
+        restored = (
+            await self.repository
+            .complete_broadcaster_reauthorization(
+                created.request_id,
+                twitch_user_id="456",
+                discord_user_id="123",
+            )
+        )
+
+        loaded = await self.repository.get(
+            created.request_id
+        )
+        events = await self.repository.list_events(
+            created.request_id
+        )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT enabled
+                FROM broadcasters
+                WHERE twitch_user_id = ?
+                """,
+                ("456",),
+            )
+            broadcaster_row = await cursor.fetchone()
+            await cursor.close()
+
+        self.assertTrue(restored)
+        self.assertEqual(
+            loaded.status,
+            BroadcasterRequestStatus.ACTIVE,
+        )
+        self.assertEqual(broadcaster_row["enabled"], 1)
+        self.assertEqual(
+            events[-1].event_type,
+            "broadcaster_reauthorization_completed",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
