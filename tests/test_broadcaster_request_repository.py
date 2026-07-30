@@ -226,6 +226,95 @@ class BroadcasterRequestRepositoryTests(
             "3000",
         )
 
+    async def test_reauthorization_pauses_broadcaster_atomically(
+        self,
+    ) -> None:
+        created = await self.create_request()
+
+        await self.repository.transition(
+            created.request_id,
+            expected_statuses=(
+                BroadcasterRequestStatus.PENDING,
+            ),
+            new_status=BroadcasterRequestStatus.ACTIVE,
+            event_type="test_activated",
+        )
+
+        async with self.database.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO account_links (
+                    twitch_user_id,
+                    discord_user_id,
+                    status,
+                    verification_method,
+                    verified_at
+                )
+                VALUES (?, ?, 'verified', ?, CURRENT_TIMESTAMP)
+                """,
+                ("456", "123", "test"),
+            )
+            await connection.execute(
+                """
+                INSERT INTO broadcasters (
+                    twitch_user_id,
+                    owner_discord_user_id,
+                    enabled
+                )
+                VALUES (?, ?, 1)
+                """,
+                ("456", "123"),
+            )
+            await connection.commit()
+
+        changed = (
+            await self.repository
+            .require_reauthorization_for_broadcaster(
+                "456",
+                reason="Refresh token rejected.",
+            )
+        )
+
+        loaded = await self.repository.get(
+            created.request_id
+        )
+        events = await self.repository.list_events(
+            created.request_id
+        )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT enabled
+                FROM broadcasters
+                WHERE twitch_user_id = ?
+                """,
+                ("456",),
+            )
+            broadcaster_row = await cursor.fetchone()
+            await cursor.close()
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            loaded.status,
+            BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED,
+        )
+        self.assertEqual(broadcaster_row["enabled"], 0)
+        self.assertEqual(
+            events[-1].event_type,
+            "broadcaster_reauthorization_required",
+        )
+        self.assertEqual(
+            events[-1].from_status,
+            BroadcasterRequestStatus.ACTIVE,
+        )
+        self.assertEqual(
+            events[-1].to_status,
+            BroadcasterRequestStatus
+            .REAUTHORIZATION_REQUIRED,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

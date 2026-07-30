@@ -5,6 +5,10 @@ from types import SimpleNamespace
 from chimebuddy.twitch.worker import (
     eventsub_supervisor_loop,
     token_validation_loop,
+    validate_enabled_broadcaster_credentials,
+)
+from chimebuddy.twitch.token_manager import (
+    ReauthorizationRequiredError,
 )
 
 
@@ -12,11 +16,37 @@ class FakeTokenManager:
     def __init__(self):
         self.calls = 0
         self.called_event = asyncio.Event()
+        self.validation_errors = {}
 
-    async def validate_registered(self):
+    async def validate_now(
+        self,
+        twitch_user_id,
+        credential_kind,
+        required_scopes=(),
+    ):
         self.calls += 1
         self.called_event.set()
-        return {}
+
+        error = self.validation_errors.get(
+            str(twitch_user_id)
+        )
+
+        if error is not None:
+            raise error
+
+        return "access-token"
+
+
+class FakeRuntime:
+    def __init__(self, token_manager) -> None:
+        self.token_manager = token_manager
+        self.bot_validation_calls = 0
+        self.bot_called_event = asyncio.Event()
+
+    async def validate_bot_token(self):
+        self.bot_validation_calls += 1
+        self.bot_called_event.set()
+        return "bot-access-token"
 
 
 class FakeIdentityRepository:
@@ -96,22 +126,31 @@ class TwitchWorkerTests(
     async def test_periodic_token_validation(self):
         token_manager = FakeTokenManager()
 
-        runtime = SimpleNamespace(
-            token_manager=token_manager
-        )
+        runtime = FakeRuntime(token_manager)
+        repository = FakeIdentityRepository()
+
+        async def handle_reauthorization(
+            broadcaster_id,
+            reason,
+        ):
+            raise AssertionError(
+                "No broadcaster should need reauthorization."
+            )
 
         stop_event = asyncio.Event()
 
         task = asyncio.create_task(
             token_validation_loop(
                 runtime,
+                repository,
+                handle_reauthorization,
                 stop_event,
                 validation_interval_seconds=0.01,
             )
         )
 
         await asyncio.wait_for(
-            token_manager.called_event.wait(),
+            runtime.bot_called_event.wait(),
             timeout=1,
         )
 
@@ -123,21 +162,57 @@ class TwitchWorkerTests(
         )
 
         self.assertGreaterEqual(
-            token_manager.calls,
+            runtime.bot_validation_calls,
             1,
         )
 
     async def test_rejects_invalid_token_interval(self):
-        runtime = SimpleNamespace(
-            token_manager=FakeTokenManager()
-        )
+        runtime = FakeRuntime(FakeTokenManager())
 
         with self.assertRaises(ValueError):
             await token_validation_loop(
                 runtime,
+                FakeIdentityRepository(),
+                lambda broadcaster_id, reason: None,
                 asyncio.Event(),
                 validation_interval_seconds=0,
             )
+
+    async def test_broadcaster_reauthorization_is_isolated(
+        self,
+    ) -> None:
+        token_manager = FakeTokenManager()
+        token_manager.validation_errors["100"] = (
+            ReauthorizationRequiredError(
+                "Refresh token rejected."
+            )
+        )
+
+        runtime = FakeRuntime(token_manager)
+        repository = FakeIdentityRepository(
+            ("100", "200")
+        )
+        reauthorization_calls = []
+
+        async def handle_reauthorization(
+            broadcaster_id,
+            reason,
+        ):
+            reauthorization_calls.append(
+                (broadcaster_id, reason)
+            )
+
+        await validate_enabled_broadcaster_credentials(
+            runtime,
+            repository,
+            handle_reauthorization,
+        )
+
+        self.assertEqual(
+            reauthorization_calls,
+            [("100", "Refresh token rejected.")],
+        )
+        self.assertEqual(token_manager.calls, 2)
 
     async def test_eventsub_starts_for_enabled_channels(
         self,

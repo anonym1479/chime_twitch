@@ -8,8 +8,10 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from chimebuddy.database import Database
+from chimebuddy.models import OAuthCredentialKind
 from chimebuddy.models.chat import TwitchChatMessage
 from chimebuddy.repositories import (
+    BroadcasterRequestRepository,
     IdentityRepository,
     TriggerRepository,
 )
@@ -33,7 +35,18 @@ from chimebuddy.services.twitch_command_router import (
 from chimebuddy.twitch.eventsub_websocket import (
     EventSubWebSocketService,
 )
+from chimebuddy.twitch.oauth_client import TwitchOAuthError
 from chimebuddy.twitch.runtime import TwitchRuntime
+from chimebuddy.twitch.scopes import (
+    BROADCASTER_CHAT_SCOPES,
+)
+from chimebuddy.twitch.token_manager import (
+    CredentialNotFoundError,
+    MissingScopesError,
+    ReauthorizationRequiredError,
+    TokenClientMismatchError,
+    TokenIdentityMismatchError,
+)
 
 
 logger = logging.getLogger(
@@ -60,6 +73,19 @@ BroadcasterCleanup = Callable[
     [tuple[str, ...]],
     Awaitable[None],
 ]
+
+BroadcasterReauthorizationHandler = Callable[
+    [str, str],
+    Awaitable[None],
+]
+
+BROADCASTER_REAUTHORIZATION_ERRORS = (
+    CredentialNotFoundError,
+    MissingScopesError,
+    ReauthorizationRequiredError,
+    TokenClientMismatchError,
+    TokenIdentityMismatchError,
+)
 
 class RoutedChatMessageHandler:
     """Logs chat messages and routes Twitch commands."""
@@ -435,8 +461,63 @@ async def eventsub_supervisor_loop(
     )
 
 
+async def validate_enabled_broadcaster_credentials(
+    runtime: TwitchRuntime,
+    identity_repository: IdentityRepository,
+    reauthorization_handler: (
+        BroadcasterReauthorizationHandler
+    ),
+) -> None:
+    """
+    Validate broadcasters independently.
+
+    Permanent authorization failures pause only the
+    affected broadcaster. Temporary Twitch failures are
+    logged and retried during the next validation cycle.
+    """
+
+    broadcaster_ids = await load_enabled_broadcaster_ids(
+        identity_repository
+    )
+
+    for broadcaster_id in broadcaster_ids:
+        try:
+            await runtime.token_manager.validate_now(
+                broadcaster_id,
+                OAuthCredentialKind.BROADCASTER,
+                BROADCASTER_CHAT_SCOPES,
+            )
+
+        except BROADCASTER_REAUTHORIZATION_ERRORS as exc:
+            await reauthorization_handler(
+                broadcaster_id,
+                str(exc),
+            )
+
+            logger.error(
+                "Paused broadcaster %s because Twitch "
+                "authorization must be renewed. The "
+                "worker will continue for other "
+                "broadcasters.",
+                broadcaster_id,
+            )
+
+        except TwitchOAuthError:
+            logger.exception(
+                "Temporary Twitch OAuth validation "
+                "failure for broadcaster %s. The "
+                "broadcaster remains enabled and will "
+                "be checked again later.",
+                broadcaster_id,
+            )
+
+
 async def token_validation_loop(
     runtime: TwitchRuntime,
+    identity_repository: IdentityRepository,
+    reauthorization_handler: (
+        BroadcasterReauthorizationHandler
+    ),
     stop_event: asyncio.Event,
     *,
     validation_interval_seconds: float = (
@@ -466,7 +547,15 @@ async def token_validation_loop(
             "Running scheduled Twitch token validation."
         )
 
-        await runtime.token_manager.validate_registered()
+        # Losing the bot credential is fatal because no
+        # Twitch feature can operate safely without it.
+        await runtime.validate_bot_token()
+
+        await validate_enabled_broadcaster_credentials(
+            runtime,
+            identity_repository,
+            reauthorization_handler,
+        )
 
         logger.info(
             "Scheduled Twitch token validation succeeded."
@@ -503,6 +592,36 @@ async def run_twitch_worker(
     identity_repository = IdentityRepository(
         database
     )
+    request_repository = BroadcasterRequestRepository(
+        database
+    )
+
+    async def require_reauthorization(
+        broadcaster_id: str,
+        reason: str,
+    ) -> None:
+        changed = (
+            await request_repository
+            .require_reauthorization_for_broadcaster(
+                broadcaster_id,
+                reason=reason,
+            )
+        )
+
+        if not changed:
+            raise TwitchWorkerError(
+                "Could not safely pause broadcaster "
+                f"{broadcaster_id} after its Twitch "
+                "authorization failed."
+            )
+
+    # Check active broadcasters before EventSub or the
+    # title monitor starts using their credentials.
+    await validate_enabled_broadcaster_credentials(
+        runtime,
+        identity_repository,
+        require_reauthorization,
+    )
 
     def eventsub_factory(
         broadcaster_ids: tuple[str, ...],
@@ -520,6 +639,8 @@ async def run_twitch_worker(
         asyncio.create_task(
             token_validation_loop(
                 runtime,
+                identity_repository,
+                require_reauthorization,
                 stop_event,
             ),
             name="token-validation",

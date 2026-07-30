@@ -607,6 +607,138 @@ class BroadcasterRequestRepository:
                 await connection.rollback()
                 raise
 
+    async def require_reauthorization_for_broadcaster(
+        self,
+        twitch_user_id: str,
+        *,
+        reason: str,
+    ) -> bool:
+        """
+        Pause an active broadcaster and record lost OAuth access.
+
+        Both changes happen in one transaction so the request status
+        and worker eligibility cannot disagree.
+        """
+
+        twitch_id = self._required_text(
+            twitch_user_id,
+            "twitch_user_id",
+        )
+        failure_reason = self._required_text(
+            reason,
+            "reason",
+        )
+
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                cursor = await connection.execute(
+                    """
+                    SELECT *
+                    FROM broadcaster_requests
+                    WHERE twitch_user_id = ?
+                      AND status IN (
+                          'active',
+                          'reauthorization_required'
+                      )
+                    ORDER BY request_id DESC
+                    LIMIT 1
+                    """,
+                    (twitch_id,),
+                )
+
+                row = await cursor.fetchone()
+                await cursor.close()
+
+                if row is None:
+                    await connection.rollback()
+                    return False
+
+                broadcaster_cursor = (
+                    await connection.execute(
+                        """
+                        UPDATE broadcasters
+                        SET
+                            enabled = 0,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE twitch_user_id = ?
+                        """,
+                        (twitch_id,),
+                    )
+                )
+
+                broadcaster_found = (
+                    broadcaster_cursor.rowcount == 1
+                )
+                await broadcaster_cursor.close()
+
+                if not broadcaster_found:
+                    await connection.rollback()
+                    return False
+
+                current_status = BroadcasterRequestStatus(
+                    row["status"]
+                )
+
+                if (
+                    current_status
+                    is BroadcasterRequestStatus
+                    .REAUTHORIZATION_REQUIRED
+                ):
+                    await connection.commit()
+                    return True
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcaster_requests
+                    SET
+                        status = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE request_id = ?
+                      AND status = ?
+                    """,
+                    (
+                        BroadcasterRequestStatus
+                        .REAUTHORIZATION_REQUIRED.value,
+                        row["request_id"],
+                        current_status.value,
+                    ),
+                )
+
+                changed = cursor.rowcount == 1
+                await cursor.close()
+
+                if not changed:
+                    await connection.rollback()
+                    return False
+
+                await self._insert_event(
+                    connection,
+                    request_id=row["request_id"],
+                    event_type=(
+                        "broadcaster_reauthorization_required"
+                    ),
+                    from_status=current_status,
+                    to_status=(
+                        BroadcasterRequestStatus
+                        .REAUTHORIZATION_REQUIRED
+                    ),
+                    actor_discord_user_id=None,
+                    details_json=json.dumps(
+                        {"reason": failure_reason},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+
+                await connection.commit()
+                return True
+
+            except Exception:
+                await connection.rollback()
+                raise
+
     async def list_events(
         self,
         request_id: int,
