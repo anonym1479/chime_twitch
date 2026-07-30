@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from chimebuddy.database import Database
@@ -54,6 +56,10 @@ class EventSubServiceFactory(Protocol):
     ) -> EventSubWebSocketService:
         """Create an EventSub service for these IDs."""
 
+BroadcasterCleanup = Callable[
+    [tuple[str, ...]],
+    Awaitable[None],
+]
 
 class RoutedChatMessageHandler:
     """Logs chat messages and routes Twitch commands."""
@@ -203,12 +209,49 @@ async def load_enabled_broadcaster_ids(
         )
     )
 
+async def cleanup_broadcaster_triggers(
+    trigger_coordinator: TriggerCoordinator,
+    broadcaster_twitch_user_ids: tuple[str, ...],
+) -> None:
+    """
+    Deactivate trigger messages before broadcasters
+    leave the active worker set.
+    """
+
+    for broadcaster_id in broadcaster_twitch_user_ids:
+        report = await trigger_coordinator.process_title(
+            broadcaster_id,
+            "",
+        )
+
+        if report.errors:
+            errors_text = "; ".join(report.errors)
+
+            raise TwitchWorkerError(
+                "Trigger cleanup failed for broadcaster "
+                f"{broadcaster_id}: {errors_text}"
+            )
+
+        logger.info(
+            "Cleaned broadcaster trigger state before "
+            "deactivation: broadcaster_id=%s, "
+            "deactivated=%s, reset=%s.",
+            broadcaster_id,
+            (
+                report.deactivated_trigger_ids
+                or "none"
+            ),
+            report.reset_trigger_ids or "none",
+        )
 
 async def eventsub_supervisor_loop(
     identity_repository: IdentityRepository,
     service_factory: EventSubServiceFactory,
     stop_event: asyncio.Event,
     *,
+    broadcaster_cleanup:(
+        BroadcasterCleanup | None
+    ) = None,
     sync_interval_seconds: float = (
         BROADCASTER_SYNC_INTERVAL_SECONDS
     ),
@@ -263,53 +306,75 @@ async def eventsub_supervisor_loop(
             )
 
             if desired_ids != current_ids:
-                previous_ids = current_ids
-                current_ids = desired_ids
+                previous_ids = current_ids or ()
+
+                added_ids = tuple(
+                    sorted(
+                        set(desired_ids)
+                        - set(previous_ids)
+                    )
+                )
+                removed_ids = tuple(
+                    sorted(
+                        set(previous_ids)
+                        - set(desired_ids)
+                    )
+                )
+
+                cleanup_succeeded = True
 
                 if (
-                    eventsub_task is not None
-                    and eventsub_stop_event is not None
+                    removed_ids
+                    and broadcaster_cleanup is not None
                 ):
-                    eventsub_stop_event.set()
+                    try:
+                        await broadcaster_cleanup(
+                            removed_ids
+                        )
+                    except Exception:
+                        cleanup_succeeded = False
 
-                    result = await asyncio.gather(
-                        eventsub_task,
-                        return_exceptions=True,
-                    )
+                        logger.exception(
+                            "Broadcaster removal cleanup "
+                            "failed for %s. The Twitch "
+                            "worker will retry before "
+                            "removing these broadcasters.",
+                            removed_ids,
+                        )
 
-                    child_result = result[0]
-
+                if cleanup_succeeded:
                     if (
-                        isinstance(
-                            child_result,
-                            BaseException,
-                        )
-                        and not isinstance(
-                            child_result,
-                            asyncio.CancelledError,
-                        )
+                        eventsub_task is not None
+                        and eventsub_stop_event is not None
                     ):
-                        raise TwitchWorkerError(
-                            "The EventSub child service "
-                            "failed while reconfiguring."
-                        ) from child_result
+                        eventsub_stop_event.set()
 
-                    eventsub_task = None
-                    eventsub_stop_event = None
+                        result = await asyncio.gather(
+                            eventsub_task,
+                            return_exceptions=True,
+                        )
 
-                if current_ids:
-                    added_ids = tuple(
-                        sorted(
-                            set(current_ids)
-                            - set(previous_ids or ())
-                        )
-                    )
-                    removed_ids = tuple(
-                        sorted(
-                            set(previous_ids or ())
-                            - set(current_ids)
-                        )
-                    )
+                        child_result = result[0]
+
+                        if (
+                            isinstance(
+                                child_result,
+                                BaseException,
+                            )
+                            and not isinstance(
+                                child_result,
+                                asyncio.CancelledError,
+                            )
+                        ):
+                            raise TwitchWorkerError(
+                                "The EventSub child service "
+                                "failed while reconfiguring."
+                            ) from child_result
+
+                        eventsub_task = None
+                        eventsub_stop_event = None
+
+                    current_ids = desired_ids
 
                     logger.info(
                         "Enabled broadcaster list changed. "
@@ -319,25 +384,31 @@ async def eventsub_supervisor_loop(
                         removed_ids or "none",
                     )
 
-                    service = service_factory(
-                        current_ids
-                    )
+                    if current_ids:
+                        service = service_factory(
+                            current_ids
+                        )
 
-                    eventsub_stop_event = asyncio.Event()
+                        eventsub_stop_event = (
+                            asyncio.Event()
+                        )
 
-                    eventsub_task = asyncio.create_task(
-                        service.run(
-                            eventsub_stop_event
-                        ),
-                        name="eventsub-websocket",
-                    )
+                        eventsub_task = (
+                            asyncio.create_task(
+                                service.run(
+                                    eventsub_stop_event
+                                ),
+                                name="eventsub-websocket",
+                            )
+                        )
 
-                else:
-                    logger.warning(
-                        "No enabled broadcasters exist. "
-                        "EventSub is waiting for a "
-                        "broadcaster to be activated."
-                    )
+                    else:
+                        logger.warning(
+                            "No enabled broadcasters "
+                            "exist. EventSub is waiting "
+                            "for a broadcaster to be "
+                            "activated."
+                        )
 
             try:
                 await asyncio.wait_for(
@@ -421,6 +492,14 @@ async def run_twitch_worker(
         runtime,
     )
 
+    async def broadcaster_cleanup(
+        broadcaster_ids: tuple[str, ...],
+    ) -> None:
+        await cleanup_broadcaster_triggers(
+            title_monitor.trigger_coordinator,
+            broadcaster_ids,
+        )
+
     identity_repository = IdentityRepository(
         database
     )
@@ -450,6 +529,9 @@ async def run_twitch_worker(
                 identity_repository,
                 eventsub_factory,
                 stop_event,
+                broadcaster_cleanup=(
+                    broadcaster_cleanup
+                ),
             ),
             name="broadcaster-sync",
         ),
