@@ -198,6 +198,21 @@ class BroadcasterPanelRepositoryTests(
         self.assertTrue(first_result)
         self.assertFalse(second_result)
 
+    async def test_lists_all_panels(
+        self,
+    ) -> None:
+        await self.repository.create(
+            self.make_panel()
+        )
+
+        panels = await self.repository.list_all()
+
+        self.assertEqual(len(panels), 1)
+        self.assertEqual(
+            panels[0].twitch_user_id,
+            "456",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

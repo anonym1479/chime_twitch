@@ -131,6 +131,26 @@ class BroadcasterPanelRepository:
 
         return self._from_row(row)
 
+    async def list_all(
+        self,
+    ) -> list[BroadcasterPanel]:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT *
+                FROM broadcaster_panels
+                ORDER BY created_at, twitch_user_id
+                """
+            )
+
+            rows = await cursor.fetchall()
+            await cursor.close()
+
+        return [
+            self._from_row(row)
+            for row in rows
+        ]
+
     async def set_opening_message(
         self,
         twitch_user_id: str,
