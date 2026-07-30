@@ -58,6 +58,12 @@ from chimebuddy.services.broadcaster_panel_status_service import (
     BroadcasterPanelStatusError,
     BroadcasterPanelStatusService,
 )
+from chimebuddy.services.broadcaster_lifecycle_service import (
+    BroadcasterLifecycleError,
+    BroadcasterLifecycleService,
+    BroadcasterNotFoundError,
+    BroadcasterResumeBlockedError,
+)
 
 __all__ = [
     "ChatGateway",
@@ -102,4 +108,8 @@ __all__ = [
     "BroadcasterPanelStatus",
     "BroadcasterPanelStatusError",
     "BroadcasterPanelStatusService",
+    "BroadcasterLifecycleError",
+    "BroadcasterLifecycleService",
+    "BroadcasterNotFoundError",
+    "BroadcasterResumeBlockedError",
 ]

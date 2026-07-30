@@ -3,11 +3,13 @@ import logging
 import discord
 
 from chimebuddy.services import (
+    BroadcasterLifecycleError,
+    BroadcasterLifecycleService,
     BroadcasterPanelNotFoundError,
     BroadcasterPanelStatus,
     BroadcasterPanelStatusService,
+    BroadcasterResumeBlockedError,
 )
-
 
 logger = logging.getLogger(
     "chimebuddy.discord.broadcaster_panel"
@@ -15,6 +17,9 @@ logger = logging.getLogger(
 
 REFRESH_PANEL_CUSTOM_ID = (
     "chimebuddy:broadcaster:refresh"
+)
+LIFECYCLE_BUTTON_CUSTOM_ID = (
+    "chimebuddy:broadcaster:lifecycle"
 )
 
 
@@ -148,11 +153,31 @@ class BroadcasterManagementView(discord.ui.View):
     def __init__(
         self,
         controller: "DiscordBroadcasterPanelController",
-        twitch_user_id: str,
+        status: BroadcasterPanelStatus,
     ) -> None:
         super().__init__(timeout=None)
         self.controller = controller
-        self.twitch_user_id = str(twitch_user_id)
+        self.twitch_user_id = status.twitch_user_id
+        self.broadcaster_enabled = (
+            status.broadcaster_enabled
+        )
+
+        if self.broadcaster_enabled:
+            self.lifecycle_button.label = (
+                "Pause ChimeBuddy"
+            )
+            self.lifecycle_button.style = (
+                discord.ButtonStyle.danger
+            )
+            self.lifecycle_button.emoji = "⏸️"
+        else:
+            self.lifecycle_button.label = (
+                "Resume ChimeBuddy"
+            )
+            self.lifecycle_button.style = (
+                discord.ButtonStyle.success
+            )
+            self.lifecycle_button.emoji = "▶️"
 
     @discord.ui.button(
         label="Refresh status",
@@ -170,18 +195,110 @@ class BroadcasterManagementView(discord.ui.View):
             self.twitch_user_id,
         )
 
+    @discord.ui.button(
+        label="Pause ChimeBuddy",
+        style=discord.ButtonStyle.danger,
+        emoji="⏸️",
+        custom_id=LIFECYCLE_BUTTON_CUSTOM_ID,
+    )
+    async def lifecycle_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.handle_lifecycle_request(
+            interaction,
+            self.twitch_user_id,
+            currently_enabled=(
+                self.broadcaster_enabled
+            ),
+        )
+
+
+class LifecycleConfirmationView(discord.ui.View):
+    """Short-lived confirmation for pause or resume."""
+
+    def __init__(
+        self,
+        *,
+        controller: "DiscordBroadcasterPanelController",
+        twitch_user_id: str,
+        enable: bool,
+        requested_by_user_id: int,
+        panel_message: discord.Message,
+    ) -> None:
+        super().__init__(timeout=60)
+        self.controller = controller
+        self.twitch_user_id = twitch_user_id
+        self.enable = enable
+        self.requested_by_user_id = int(
+            requested_by_user_id
+        )
+        self.panel_message = panel_message
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+        if (
+            interaction.user.id
+            == self.requested_by_user_id
+        ):
+            return True
+
+        await interaction.response.send_message(
+            "Only the person who started this action "
+            "can confirm it.",
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(
+        label="Confirm",
+        style=discord.ButtonStyle.danger,
+        emoji="✅",
+    )
+    async def confirm_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.confirm_lifecycle_change(
+            interaction,
+            twitch_user_id=self.twitch_user_id,
+            enable=self.enable,
+            panel_message=self.panel_message,
+        )
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+        emoji="✖️",
+    )
+    async def cancel_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await interaction.response.edit_message(
+            content="The status change was cancelled.",
+            view=None,
+        )
+
 
 class DiscordBroadcasterPanelController:
-    """Restores and refreshes broadcaster dashboards."""
+    """Restores and controls broadcaster dashboards."""
 
     def __init__(
         self,
         *,
         status_service: BroadcasterPanelStatusService,
+        lifecycle_service: BroadcasterLifecycleService,
         panel_repository,
         developer_discord_user_id: int,
     ) -> None:
         self.status_service = status_service
+        self.lifecycle_service = lifecycle_service
         self.panel_repository = panel_repository
         self.developer_discord_user_id = int(
             developer_discord_user_id
@@ -189,11 +306,11 @@ class DiscordBroadcasterPanelController:
 
     def create_view(
         self,
-        twitch_user_id: str,
+        status: BroadcasterPanelStatus,
     ) -> BroadcasterManagementView:
         return BroadcasterManagementView(
             self,
-            twitch_user_id,
+            status,
         )
 
     async def restore_panels(
@@ -236,9 +353,7 @@ class DiscordBroadcasterPanelController:
                     )
                 )
 
-                view = self.create_view(
-                    panel.twitch_user_id
-                )
+                view = self.create_view(status)
 
                 client.add_view(
                     view,
@@ -294,49 +409,12 @@ class DiscordBroadcasterPanelController:
         interaction: discord.Interaction,
         twitch_user_id: str,
     ) -> None:
-        try:
-            status = (
-                await self.status_service
-                .get_for_broadcaster(twitch_user_id)
-            )
-        except BroadcasterPanelNotFoundError:
-            await interaction.response.send_message(
-                "This broadcaster panel is no longer "
-                "registered.",
-                ephemeral=True,
-            )
-            return
-        except Exception:
-            logger.exception(
-                "Could not load broadcaster panel status "
-                "for %s.",
-                twitch_user_id,
-            )
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
 
-            await interaction.response.send_message(
-                "ChimeBuddy could not load this panel's "
-                "status.",
-                ephemeral=True,
-            )
-            return
-
-        if not can_manage_broadcaster_panel(
-            interaction.user.id,
-            status,
-            self.developer_discord_user_id,
-        ):
-            logger.warning(
-                "Denied broadcaster panel access to "
-                "Discord user %s for Twitch user %s.",
-                interaction.user.id,
-                twitch_user_id,
-            )
-
-            await interaction.response.send_message(
-                "Only this broadcaster or the ChimeBuddy "
-                "developer can use these controls.",
-                ephemeral=True,
-            )
+        if status is None:
             return
 
         if interaction.message is None:
@@ -356,7 +434,7 @@ class DiscordBroadcasterPanelController:
             embed=build_broadcaster_management_embed(
                 status
             ),
-            view=self.create_view(twitch_user_id),
+            view=self.create_view(status),
             allowed_mentions=(
                 discord.AllowedMentions.none()
             ),
@@ -365,3 +443,222 @@ class DiscordBroadcasterPanelController:
         await interaction.edit_original_response(
             content="The broadcaster status was refreshed."
         )
+
+    async def handle_lifecycle_request(
+        self,
+        interaction: discord.Interaction,
+        twitch_user_id: str,
+        *,
+        currently_enabled: bool,
+    ) -> None:
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
+
+        if status is None:
+            return
+
+        if interaction.message is None:
+            await interaction.response.send_message(
+                "The broadcaster panel message could not "
+                "be found.",
+                ephemeral=True,
+            )
+            return
+
+        # Use the fresh database value, not only the
+        # value stored by the button when it was created.
+        enable = not status.broadcaster_enabled
+
+        if enable:
+            action_text = "resume"
+            explanation = (
+                "ChimeBuddy will reconnect to this Twitch "
+                "channel shortly."
+            )
+        else:
+            action_text = "pause"
+            explanation = (
+                "ChimeBuddy will stop receiving this "
+                "channel's Twitch events shortly. "
+                "Credentials, triggers, and settings will "
+                "be preserved."
+            )
+
+        confirmation_view = LifecycleConfirmationView(
+            controller=self,
+            twitch_user_id=twitch_user_id,
+            enable=enable,
+            requested_by_user_id=(
+                interaction.user.id
+            ),
+            panel_message=interaction.message,
+        )
+
+        await interaction.response.send_message(
+            (
+                f"Are you sure you want to **{action_text} "
+                "ChimeBuddy** for "
+                f"`{status.twitch_login}`?\n\n"
+                f"{explanation}"
+            ),
+            view=confirmation_view,
+            ephemeral=True,
+        )
+
+    async def confirm_lifecycle_change(
+        self,
+        interaction: discord.Interaction,
+        *,
+        twitch_user_id: str,
+        enable: bool,
+        panel_message: discord.Message,
+    ) -> None:
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
+
+        if status is None:
+            return
+
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True,
+        )
+
+        try:
+            if enable:
+                await self.lifecycle_service.resume(
+                    twitch_user_id
+                )
+                result_text = (
+                    "ChimeBuddy was resumed. Twitch "
+                    "reconnection may take up to the "
+                    "broadcaster synchronization interval."
+                )
+            else:
+                await self.lifecycle_service.pause(
+                    twitch_user_id
+                )
+                result_text = (
+                    "ChimeBuddy was paused. Its settings "
+                    "and Twitch authorization were kept."
+                )
+
+            updated_status = (
+                await self.status_service
+                .get_for_broadcaster(twitch_user_id)
+            )
+
+            await panel_message.edit(
+                embed=(
+                    build_broadcaster_management_embed(
+                        updated_status
+                    )
+                ),
+                view=self.create_view(updated_status),
+                allowed_mentions=(
+                    discord.AllowedMentions.none()
+                ),
+            )
+
+        except BroadcasterResumeBlockedError as exc:
+            await interaction.edit_original_response(
+                content=(
+                    "ChimeBuddy could not be resumed:\n"
+                    f"{exc}"
+                ),
+                view=None,
+            )
+            return
+
+        except BroadcasterLifecycleError:
+            logger.exception(
+                "Broadcaster lifecycle change failed "
+                "for Twitch user %s.",
+                twitch_user_id,
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "ChimeBuddy could not change the "
+                    "broadcaster status."
+                ),
+                view=None,
+            )
+            return
+
+        except discord.HTTPException:
+            logger.exception(
+                "The broadcaster changed status, but its "
+                "Discord panel could not be updated."
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "The broadcaster status changed, but "
+                    "Discord could not refresh the panel. "
+                    "Press **Refresh status**."
+                ),
+                view=None,
+            )
+            return
+
+        await interaction.edit_original_response(
+            content=result_text,
+            view=None,
+        )
+
+    async def _load_authorized_status(
+        self,
+        interaction: discord.Interaction,
+        twitch_user_id: str,
+    ) -> BroadcasterPanelStatus | None:
+        try:
+            status = (
+                await self.status_service
+                .get_for_broadcaster(twitch_user_id)
+            )
+        except BroadcasterPanelNotFoundError:
+            await interaction.response.send_message(
+                "This broadcaster panel is no longer "
+                "registered.",
+                ephemeral=True,
+            )
+            return None
+        except Exception:
+            logger.exception(
+                "Could not load broadcaster panel status "
+                "for %s.",
+                twitch_user_id,
+            )
+
+            await interaction.response.send_message(
+                "ChimeBuddy could not load this panel's "
+                "status.",
+                ephemeral=True,
+            )
+            return None
+
+        if not can_manage_broadcaster_panel(
+            interaction.user.id,
+            status,
+            self.developer_discord_user_id,
+        ):
+            logger.warning(
+                "Denied broadcaster panel access to "
+                "Discord user %s for Twitch user %s.",
+                interaction.user.id,
+                twitch_user_id,
+            )
+
+            await interaction.response.send_message(
+                "Only this broadcaster or the ChimeBuddy "
+                "developer can use these controls.",
+                ephemeral=True,
+            )
+            return None
+
+        return status

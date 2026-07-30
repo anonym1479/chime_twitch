@@ -32,10 +32,11 @@ from chimebuddy.repositories import (
 )
 from chimebuddy.services import (
     AccountLinkingService,
+    BroadcasterLifecycleService,
+    BroadcasterPanelStatusService,
+    BroadcasterProvisioningService,
     OnboardingService,
     ReviewDecisionService,
-    BroadcasterProvisioningService,
-    BroadcasterPanelStatusService,
 )
 from chimebuddy.twitch.device_authorization import (
     TwitchDeviceAuthorizationClient,
@@ -141,10 +142,24 @@ async def run(settings: Settings) -> None:
         )
     )
 
+    broadcaster_lifecycle_service = (
+        BroadcasterLifecycleService(
+            identity_repository=(
+                identity_repository
+            ),
+            credential_repository=(
+                credential_repository
+            ),
+        )
+    )
+
     broadcaster_panel_controller = (
         DiscordBroadcasterPanelController(
             status_service=(
                 broadcaster_panel_status_service
+            ),
+            lifecycle_service=(
+                broadcaster_lifecycle_service
             ),
             panel_repository=panel_repository,
             developer_discord_user_id=(
