@@ -1,4 +1,5 @@
 import time
+import asyncio
 import unittest
 
 from chimebuddy.models import (
@@ -321,6 +322,133 @@ class TwitchTokenManagerTests(
         self.assertEqual(
             oauth_client.refresh_calls,
             [],
+        )
+        
+    async def test_proactively_refreshes_before_next_validation(
+        self,
+    ) -> None:
+        repository = FakeCredentialRepository(
+            make_credential(
+                expires_in=3700
+            )
+        )
+        oauth_client = FakeOAuthClient()
+
+        oauth_client.refresh_results[
+            "refresh-old"
+        ] = RefreshedTokens(
+            access_token="access-new",
+            refresh_token="refresh-new",
+            scopes=REQUIRED_SCOPES,
+            expires_in=7200,
+            token_type="bearer",
+        )
+
+        oauth_client.validation_results[
+            "access-new"
+        ] = make_validation()
+
+        manager = TwitchTokenManager(
+            oauth_client,
+            repository,
+        )
+
+        with self.assertLogs(
+            "chimebuddy.twitch.token_manager",
+            level="INFO",
+        ) as captured_logs:
+            token = await manager.get_access_token(
+                USER_ID,
+                OAuthCredentialKind.BOT,
+                REQUIRED_SCOPES,
+            )
+
+        logs = "\n".join(
+            captured_logs.output
+        )
+
+        self.assertEqual(
+            token,
+            "access-new",
+        )
+        self.assertEqual(
+            oauth_client.refresh_calls,
+            ["refresh-old"],
+        )
+        self.assertEqual(
+            oauth_client.validate_calls,
+            ["access-new"],
+        )
+
+        self.assertIn(USER_ID, logs)
+        self.assertIn("kind=bot", logs)
+        self.assertIn(
+            "refreshed successfully",
+            logs,
+        )
+
+        # Secrets must never appear in logs.
+        self.assertNotIn(
+            "access-new",
+            logs,
+        )
+        self.assertNotIn(
+            "refresh-new",
+            logs,
+        )
+
+    async def test_concurrent_requests_refresh_only_once(
+        self,
+    ) -> None:
+        repository = FakeCredentialRepository(
+            make_credential(
+                expires_in=3700
+            )
+        )
+        oauth_client = FakeOAuthClient()
+
+        oauth_client.refresh_results[
+            "refresh-old"
+        ] = RefreshedTokens(
+            access_token="access-new",
+            refresh_token="refresh-new",
+            scopes=REQUIRED_SCOPES,
+            expires_in=7200,
+            token_type="bearer",
+        )
+
+        oauth_client.validation_results[
+            "access-new"
+        ] = make_validation()
+
+        manager = TwitchTokenManager(
+            oauth_client,
+            repository,
+        )
+
+        tokens = await asyncio.gather(
+            manager.get_access_token(
+                USER_ID,
+                OAuthCredentialKind.BOT,
+                REQUIRED_SCOPES,
+            ),
+            manager.get_access_token(
+                USER_ID,
+                OAuthCredentialKind.BOT,
+                REQUIRED_SCOPES,
+            ),
+        )
+
+        self.assertEqual(
+            tokens,
+            [
+                "access-new",
+                "access-new",
+            ],
+        )
+        self.assertEqual(
+            oauth_client.refresh_calls,
+            ["refresh-old"],
         )
 
 

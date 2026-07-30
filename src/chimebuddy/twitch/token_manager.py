@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Iterable
 
@@ -17,6 +18,12 @@ from chimebuddy.twitch.oauth_client import (
     TokenValidation,
     TwitchOAuthClient,
 )
+
+logger = logging.getLogger(
+    "chimebuddy.twitch.token_manager"
+)
+
+REFRESH_SAFETY_MARGIN_SECONDS = 300
 
 
 CredentialKey = tuple[str, OAuthCredentialKind]
@@ -75,11 +82,17 @@ class TwitchTokenManager:
         credential_repository: OAuthCredentialRepository,
         *,
         validation_interval: int = 3600,
-        refresh_window: int = 300,
+        refresh_window: int | None = None,
     ) -> None:
         if validation_interval <= 0:
             raise ValueError(
                 "validation_interval must be positive."
+            )
+
+        if refresh_window is None:
+            refresh_window = (
+                validation_interval
+                + REFRESH_SAFETY_MARGIN_SECONDS
             )
 
         if refresh_window < 0:
@@ -358,11 +371,24 @@ class TwitchTokenManager:
         required_scopes: tuple[str, ...],
         now: int,
     ) -> str:
+        logger.info(
+            "Refreshing Twitch OAuth credential: "
+            "kind=%s, user_id=%s.",
+            credential.credential_kind.value,
+            credential.twitch_user_id,
+        )
         try:
             refreshed = await self.oauth_client.refresh(
                 credential.refresh_token
             )
         except InvalidRefreshTokenError as exc:
+            logger.error(
+                "Twitch rejected the refresh token: "
+                "kind=%s, user_id=%s. "
+                "Reauthorization is required.",
+                credential.credential_kind.value,
+                credential.twitch_user_id,
+            )
             raise ReauthorizationRequiredError(
                 "Twitch rejected the refresh token. "
                 "This account must authorize the bot again."
@@ -393,6 +419,14 @@ class TwitchTokenManager:
             validation,
             required_scopes,
             now,
+        )
+        logger.info(
+            "Twitch OAuth credential refreshed "
+            "successfully: kind=%s, user_id=%s, "
+            "valid_for_seconds=%s.",
+            credential.credential_kind.value,
+            credential.twitch_user_id,
+            validation.expires_in,
         )
 
         return refreshed_credential.access_token
