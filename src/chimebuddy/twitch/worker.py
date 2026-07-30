@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from typing import Protocol
 
 from chimebuddy.database import Database
 from chimebuddy.models.chat import TwitchChatMessage
@@ -22,25 +23,36 @@ from chimebuddy.services.trigger_matcher import (
 from chimebuddy.services.trigger_state_machine import (
     TriggerStateMachine,
 )
-from chimebuddy.twitch.eventsub_websocket import (
-    EventSubWebSocketService,
-)
 from chimebuddy.services.twitch_command_router import (
     TwitchCommandContext,
     TwitchCommandPermission,
     TwitchCommandRouter,
 )
+from chimebuddy.twitch.eventsub_websocket import (
+    EventSubWebSocketService,
+)
 from chimebuddy.twitch.runtime import TwitchRuntime
 
 
-logger = logging.getLogger("chimebuddy.twitch.worker")
+logger = logging.getLogger(
+    "chimebuddy.twitch.worker"
+)
 
 TITLE_POLL_INTERVAL_SECONDS = 60
 TOKEN_VALIDATION_INTERVAL_SECONDS = 3600
+BROADCASTER_SYNC_INTERVAL_SECONDS = 30
 
 
 class TwitchWorkerError(RuntimeError):
     """Raised when a background worker service fails."""
+
+
+class EventSubServiceFactory(Protocol):
+    def __call__(
+        self,
+        broadcaster_twitch_user_ids: tuple[str, ...],
+    ) -> EventSubWebSocketService:
+        """Create an EventSub service for these IDs."""
 
 
 class RoutedChatMessageHandler:
@@ -148,34 +160,14 @@ def create_title_monitor(
     )
 
 
-async def create_eventsub_service(
-    database: Database,
+def create_eventsub_service(
     runtime: TwitchRuntime,
-) -> EventSubWebSocketService | None:
-    identity_repository = IdentityRepository(database)
-
-    broadcasters = (
-        await identity_repository.list_broadcasters(
-            enabled_only=True
-        )
-    )
-
-    broadcaster_ids = tuple(
-        broadcaster.twitch_user_id
-        for broadcaster in broadcasters
-    )
-
-    if not broadcaster_ids:
-        logger.warning(
-            "No enabled broadcasters exist. "
-            "EventSub chat reception will not start."
-        )
-        return None
-
+    broadcaster_twitch_user_ids: tuple[str, ...],
+) -> EventSubWebSocketService:
     logger.info(
         "Preparing EventSub chat reception for "
         "%s broadcaster(s).",
-        len(broadcaster_ids),
+        len(broadcaster_twitch_user_ids),
     )
 
     return EventSubWebSocketService(
@@ -184,7 +176,7 @@ async def create_eventsub_service(
             runtime.eventsub_subscription_client
         ),
         broadcaster_twitch_user_ids=(
-            broadcaster_ids
+            broadcaster_twitch_user_ids
         ),
         chat_message_handler=(
             RoutedChatMessageHandler(
@@ -192,6 +184,183 @@ async def create_eventsub_service(
                 create_command_router(runtime),
             )
         ),
+    )
+
+
+async def load_enabled_broadcaster_ids(
+    identity_repository: IdentityRepository,
+) -> tuple[str, ...]:
+    broadcasters = (
+        await identity_repository.list_broadcasters(
+            enabled_only=True
+        )
+    )
+
+    return tuple(
+        sorted(
+            broadcaster.twitch_user_id
+            for broadcaster in broadcasters
+        )
+    )
+
+
+async def eventsub_supervisor_loop(
+    identity_repository: IdentityRepository,
+    service_factory: EventSubServiceFactory,
+    stop_event: asyncio.Event,
+    *,
+    sync_interval_seconds: float = (
+        BROADCASTER_SYNC_INTERVAL_SECONDS
+    ),
+) -> None:
+    """
+    Keep EventSub synchronized with enabled broadcasters.
+
+    Only the EventSub child connection is restarted when
+    the broadcaster list changes.
+    """
+
+    if sync_interval_seconds <= 0:
+        raise ValueError(
+            "sync_interval_seconds must be positive."
+        )
+
+    current_ids: tuple[str, ...] | None = None
+    eventsub_task: asyncio.Task | None = None
+    eventsub_stop_event: asyncio.Event | None = None
+
+    logger.info(
+        "Broadcaster synchronization started with a "
+        "%s-second interval.",
+        sync_interval_seconds,
+    )
+
+    try:
+        while not stop_event.is_set():
+            if (
+                eventsub_task is not None
+                and eventsub_task.done()
+            ):
+                try:
+                    await eventsub_task
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    raise TwitchWorkerError(
+                        "The EventSub child service "
+                        f"stopped unexpectedly: {exc}"
+                    ) from exc
+
+                raise TwitchWorkerError(
+                    "The EventSub child service stopped "
+                    "unexpectedly without an error."
+                )
+
+            desired_ids = (
+                await load_enabled_broadcaster_ids(
+                    identity_repository
+                )
+            )
+
+            if desired_ids != current_ids:
+                previous_ids = current_ids
+                current_ids = desired_ids
+
+                if (
+                    eventsub_task is not None
+                    and eventsub_stop_event is not None
+                ):
+                    eventsub_stop_event.set()
+
+                    result = await asyncio.gather(
+                        eventsub_task,
+                        return_exceptions=True,
+                    )
+
+                    child_result = result[0]
+
+                    if (
+                        isinstance(
+                            child_result,
+                            BaseException,
+                        )
+                        and not isinstance(
+                            child_result,
+                            asyncio.CancelledError,
+                        )
+                    ):
+                        raise TwitchWorkerError(
+                            "The EventSub child service "
+                            "failed while reconfiguring."
+                        ) from child_result
+
+                    eventsub_task = None
+                    eventsub_stop_event = None
+
+                if current_ids:
+                    added_ids = tuple(
+                        sorted(
+                            set(current_ids)
+                            - set(previous_ids or ())
+                        )
+                    )
+                    removed_ids = tuple(
+                        sorted(
+                            set(previous_ids or ())
+                            - set(current_ids)
+                        )
+                    )
+
+                    logger.info(
+                        "Enabled broadcaster list changed. "
+                        "Total: %s, added: %s, removed: %s.",
+                        len(current_ids),
+                        added_ids or "none",
+                        removed_ids or "none",
+                    )
+
+                    service = service_factory(
+                        current_ids
+                    )
+
+                    eventsub_stop_event = asyncio.Event()
+
+                    eventsub_task = asyncio.create_task(
+                        service.run(
+                            eventsub_stop_event
+                        ),
+                        name="eventsub-websocket",
+                    )
+
+                else:
+                    logger.warning(
+                        "No enabled broadcasters exist. "
+                        "EventSub is waiting for a "
+                        "broadcaster to be activated."
+                    )
+
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=sync_interval_seconds,
+                )
+            except TimeoutError:
+                pass
+
+    finally:
+        if (
+            eventsub_task is not None
+            and eventsub_stop_event is not None
+        ):
+            eventsub_stop_event.set()
+
+            await asyncio.gather(
+                eventsub_task,
+                return_exceptions=True,
+            )
+
+    logger.info(
+        "Broadcaster synchronization stopped."
     )
 
 
@@ -252,10 +421,17 @@ async def run_twitch_worker(
         runtime,
     )
 
-    eventsub_service = await create_eventsub_service(
-        database,
-        runtime,
+    identity_repository = IdentityRepository(
+        database
     )
+
+    def eventsub_factory(
+        broadcaster_ids: tuple[str, ...],
+    ) -> EventSubWebSocketService:
+        return create_eventsub_service(
+            runtime,
+            broadcaster_ids,
+        )
 
     tasks = [
         asyncio.create_task(
@@ -269,15 +445,15 @@ async def run_twitch_worker(
             ),
             name="token-validation",
         ),
+        asyncio.create_task(
+            eventsub_supervisor_loop(
+                identity_repository,
+                eventsub_factory,
+                stop_event,
+            ),
+            name="broadcaster-sync",
+        ),
     ]
-
-    if eventsub_service is not None:
-        tasks.append(
-            asyncio.create_task(
-                eventsub_service.run(stop_event),
-                name="eventsub-websocket",
-            )
-        )
 
     for task in tasks:
         task.add_done_callback(
