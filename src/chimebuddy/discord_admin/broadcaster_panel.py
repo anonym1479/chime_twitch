@@ -21,6 +21,9 @@ REFRESH_PANEL_CUSTOM_ID = (
 LIFECYCLE_BUTTON_CUSTOM_ID = (
     "chimebuddy:broadcaster:lifecycle"
 )
+TITLE_TRIGGERS_BUTTON_CUSTOM_ID = (
+    "chimebuddy:broadcaster:title_triggers"
+)
 
 
 def can_manage_broadcaster_panel(
@@ -131,8 +134,10 @@ def build_broadcaster_management_embed(
         name="Available controls",
         value=(
             "🔄 **Refresh status** — reload this panel.\n\n"
-            "Trigger and channel-management controls "
-            "will be added here next."
+            "📝 **Title triggers** — privately list and "
+            "manage stream-title triggers.\n\n"
+            "Channel-management controls will be added "
+            "here later."
         ),
         inline=False,
     )
@@ -212,6 +217,22 @@ class BroadcasterManagementView(discord.ui.View):
             currently_enabled=(
                 self.broadcaster_enabled
             ),
+        )
+
+    @discord.ui.button(
+        label="Title triggers",
+        style=discord.ButtonStyle.primary,
+        emoji="📝",
+        custom_id=TITLE_TRIGGERS_BUTTON_CUSTOM_ID,
+    )
+    async def title_triggers_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.handle_title_triggers(
+            interaction,
+            self.twitch_user_id,
         )
 
 
@@ -296,10 +317,14 @@ class DiscordBroadcasterPanelController:
         lifecycle_service: BroadcasterLifecycleService,
         panel_repository,
         developer_discord_user_id: int,
+        trigger_management_controller=None,
     ) -> None:
         self.status_service = status_service
         self.lifecycle_service = lifecycle_service
         self.panel_repository = panel_repository
+        self.trigger_management_controller = (
+            trigger_management_controller
+        )
         self.developer_discord_user_id = int(
             developer_discord_user_id
         )
@@ -609,6 +634,35 @@ class DiscordBroadcasterPanelController:
         await interaction.edit_original_response(
             content=result_text,
             view=None,
+        )
+
+    async def handle_title_triggers(
+        self,
+        interaction: discord.Interaction,
+        twitch_user_id: str,
+    ) -> None:
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
+
+        if status is None:
+            return
+
+        if self.trigger_management_controller is None:
+            await interaction.response.send_message(
+                "Title trigger management is not "
+                "configured.",
+                ephemeral=True,
+            )
+            return
+
+        await (
+            self.trigger_management_controller
+            .show_triggers(
+                interaction,
+                twitch_user_id,
+            )
         )
 
     async def _load_authorized_status(

@@ -37,6 +37,7 @@ from chimebuddy.services import (
     BroadcasterProvisioningService,
     OnboardingService,
     ReviewDecisionService,
+    TriggerManagementService,
 )
 from chimebuddy.twitch.device_authorization import (
     TwitchDeviceAuthorizationClient,
@@ -52,6 +53,9 @@ from chimebuddy.discord_admin.provisioning import (
 )
 from chimebuddy.discord_admin.broadcaster_panel import (
     DiscordBroadcasterPanelController,
+)
+from chimebuddy.discord_admin.trigger_management import (
+    DiscordTriggerManagementController,
 )
 
 
@@ -153,6 +157,27 @@ async def run(settings: Settings) -> None:
         )
     )
 
+    trigger_management_service = (
+        TriggerManagementService(
+            trigger_repository=trigger_repository,
+            identity_repository=identity_repository,
+        )
+    )
+
+    trigger_management_controller = (
+        DiscordTriggerManagementController(
+            management_service=(
+                trigger_management_service
+            ),
+            status_service=(
+                broadcaster_panel_status_service
+            ),
+            developer_discord_user_id=(
+                settings.developer_discord_user_id
+            ),
+        )
+    )
+
     broadcaster_panel_controller = (
         DiscordBroadcasterPanelController(
             status_service=(
@@ -164,6 +189,9 @@ async def run(settings: Settings) -> None:
             panel_repository=panel_repository,
             developer_discord_user_id=(
                 settings.developer_discord_user_id
+            ),
+            trigger_management_controller=(
+                trigger_management_controller
             ),
         )
     )
