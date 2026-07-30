@@ -6,11 +6,12 @@ from chimebuddy.discord_admin.broadcaster_panel import (
     BroadcasterManagementView,
 )
 from chimebuddy.discord_admin.trigger_management import (
+    AddTriggerModal,
     DiscordTriggerManagementController,
     TriggerListView,
     build_trigger_list_embed,
     parse_match_type,
-    parse_priority,
+    parse_pin_message,
     parse_trigger_id,
 )
 from chimebuddy.models import (
@@ -112,19 +113,14 @@ class DiscordTriggerManagementTests(
         ):
             parse_match_type("regex")
 
-    def test_parses_priority(self) -> None:
-        self.assertEqual(parse_priority(""), 100)
-        self.assertEqual(parse_priority("25"), 25)
+    def test_parses_pin_message(self) -> None:
+        self.assertTrue(parse_pin_message(" Yes "))
+        self.assertFalse(parse_pin_message("no"))
 
         with self.assertRaises(
             TriggerValidationError
         ):
-            parse_priority("-1")
-
-        with self.assertRaises(
-            TriggerValidationError
-        ):
-            parse_priority("high")
+            parse_pin_message("maybe")
 
     def test_parses_trigger_id(self) -> None:
         self.assertEqual(parse_trigger_id(" 42 "), 42)
@@ -185,7 +181,30 @@ class DiscordTriggerManagementTests(
 
         self.assertIn("solo", rendered)
         self.assertIn("Solo is active.", rendered)
-        self.assertIn("25", rendered)
+        self.assertIn("Pin message: `Yes`", rendered)
+
+    def test_add_modal_asks_about_pinning(
+        self,
+    ) -> None:
+        modal = AddTriggerModal(
+            SimpleNamespace(),
+            "456",
+        )
+        labels = {
+            child.to_component_dict()["label"]
+            for child in modal.children
+        }
+
+        self.assertIn(
+            "Pin response? yes or no",
+            labels,
+        )
+        self.assertFalse(
+            any(
+                "Priority" in label
+                for label in labels
+            )
+        )
 
     def test_embed_fits_discord_limit_with_25_triggers(
         self,
@@ -407,7 +426,7 @@ class DiscordTriggerManagementControllerTests(
             expression=" solo ",
             response_message=" Solo is active. ",
             match_type_text="contains",
-            priority_text="25",
+            pin_message_text="no",
         )
 
         self.assertEqual(
@@ -420,9 +439,9 @@ class DiscordTriggerManagementControllerTests(
             management_service.created_kwargs[
                 "priority"
             ],
-            25,
+            100,
         )
-        self.assertTrue(
+        self.assertFalse(
             management_service.created_kwargs[
                 "pin_message"
             ]

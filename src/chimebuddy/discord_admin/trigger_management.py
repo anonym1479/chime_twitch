@@ -38,27 +38,20 @@ def parse_match_type(
         ) from exc
 
 
-def parse_priority(
+def parse_pin_message(
     value: str,
-) -> int:
-    cleaned = str(value).strip()
+) -> bool:
+    normalized = str(value).strip().casefold()
 
-    if not cleaned:
-        return 100
+    if normalized == "yes":
+        return True
 
-    try:
-        priority = int(cleaned)
-    except ValueError as exc:
-        raise TriggerValidationError(
-            "Priority must be a whole number."
-        ) from exc
+    if normalized == "no":
+        return False
 
-    if not 0 <= priority <= 10000:
-        raise TriggerValidationError(
-            "Priority must be between 0 and 10000."
-        )
-
-    return priority
+    raise TriggerValidationError(
+        "Pin response must be `yes` or `no`."
+    )
 
 
 def parse_trigger_id(
@@ -138,9 +131,6 @@ def build_trigger_list_embed(
         description=(
             "Title triggers send a Twitch chat message "
             "when the stream title matches an expression."
-            "\n\n"
-            "A lower priority number wins when multiple "
-            "triggers match."
         ),
         color=discord.Color.blurple(),
     )
@@ -179,8 +169,7 @@ def build_trigger_list_embed(
                 f"`#{trigger.trigger_id}` "
                 f"**{_short_text(trigger.name, 50)}** · "
                 f"{match_text} "
-                f"`{_short_text(trigger.expression, 60)}` · "
-                f"priority `{trigger.priority}`"
+                f"`{_short_text(trigger.expression, 60)}`"
             )
 
         for index, chunk in enumerate(
@@ -239,8 +228,6 @@ def build_trigger_list_embed(
                     f"{enabled_text}\n"
                     f"Title {match_text}: "
                     f"`{selected_trigger.expression}`\n"
-                    f"Priority: "
-                    f"`{selected_trigger.priority}` · "
                     f"Pin message: `{pin_text}`\n"
                     "Response: "
                     f"{selected_trigger.response_message}"
@@ -327,11 +314,11 @@ class AddTriggerModal(
         max_length=8,
     )
 
-    priority_input = discord.ui.TextInput(
-        label="Priority: 0-10000",
-        default="100",
-        required=False,
-        max_length=5,
+    pin_message_input = discord.ui.TextInput(
+        label="Pin response? yes or no",
+        default="yes",
+        min_length=2,
+        max_length=3,
     )
 
     def __init__(
@@ -360,8 +347,8 @@ class AddTriggerModal(
             match_type_text=str(
                 self.match_type_input.value
             ),
-            priority_text=str(
-                self.priority_input.value
+            pin_message_text=str(
+                self.pin_message_input.value
             ),
         )
 
@@ -395,10 +382,10 @@ class EditTriggerModal(
         max_length=8,
     )
 
-    priority_input = discord.ui.TextInput(
-        label="Priority: 0-10000",
-        required=False,
-        max_length=5,
+    pin_message_input = discord.ui.TextInput(
+        label="Pin response? yes or no",
+        min_length=2,
+        max_length=3,
     )
 
     def __init__(
@@ -417,7 +404,9 @@ class EditTriggerModal(
         self.match_type_input.default = (
             trigger.match_type.value
         )
-        self.priority_input.default = str(trigger.priority)
+        self.pin_message_input.default = (
+            "yes" if trigger.pin_message else "no"
+        )
 
     async def on_submit(
         self,
@@ -437,10 +426,10 @@ class EditTriggerModal(
             match_type_text=str(
                 self.match_type_input.value
             ),
-            priority_text=str(
-                self.priority_input.value
+            pin_message_text=str(
+                self.pin_message_input.value
             ),
-            pin_message=self.trigger.pin_message,
+            priority=self.trigger.priority,
             enabled=self.trigger.enabled,
         )
 
@@ -910,7 +899,7 @@ class DiscordTriggerManagementController:
         expression: str,
         response_message: str,
         match_type_text: str,
-        priority_text: str,
+        pin_message_text: str,
     ) -> None:
         await interaction.response.defer(
             ephemeral=True,
@@ -940,10 +929,6 @@ class DiscordTriggerManagementController:
             match_type = parse_match_type(
                 match_type_text
             )
-            priority = parse_priority(
-                priority_text
-            )
-
             created = (
                 await self.management_service
                 .create_trigger(
@@ -952,8 +937,10 @@ class DiscordTriggerManagementController:
                     expression=expression,
                     response_message=response_message,
                     match_type=match_type,
-                    priority=priority,
-                    pin_message=True,
+                    priority=100,
+                    pin_message=parse_pin_message(
+                        pin_message_text
+                    ),
                     enabled=True,
                 )
             )
@@ -1013,8 +1000,8 @@ class DiscordTriggerManagementController:
         expression: str,
         response_message: str,
         match_type_text: str,
-        priority_text: str,
-        pin_message: bool,
+        pin_message_text: str,
+        priority: int,
         enabled: bool,
     ) -> None:
         await interaction.response.defer(
@@ -1053,10 +1040,10 @@ class DiscordTriggerManagementController:
                     match_type=parse_match_type(
                         match_type_text
                     ),
-                    pin_message=pin_message,
-                    priority=parse_priority(
-                        priority_text
+                    pin_message=parse_pin_message(
+                        pin_message_text
                     ),
+                    priority=priority,
                     enabled=enabled,
                 )
             )
