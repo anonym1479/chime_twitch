@@ -20,6 +20,7 @@ from chimebuddy.services import (
     ReviewRequestStateError,
     BroadcasterProvisioningFailedError,
     BroadcasterProvisioningService,
+    BroadcasterProvisioningStateError,
 )
 
 
@@ -46,6 +47,9 @@ REJECT_BUTTON_CUSTOM_ID = (
 )
 BLACKLIST_BUTTON_CUSTOM_ID = (
     "chimebuddy:review:blacklist"
+)
+RETRY_PROVISIONING_BUTTON_CUSTOM_ID = (
+    "chimebuddy:review:retry_provisioning"
 )
 
 
@@ -396,6 +400,58 @@ class ReviewDecisionView(discord.ui.View):
         )
 
 
+class RetryProvisioningView(discord.ui.View):
+    """Persistent recovery control for failed provisioning."""
+
+    def __init__(
+        self,
+        controller: "DiscordReviewController",
+        request_id: int,
+    ) -> None:
+        super().__init__(timeout=None)
+
+        self.controller = controller
+        self.request_id = int(request_id)
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction,
+    ) -> bool:
+        if self.controller.is_developer(
+            interaction.user.id
+        ):
+            return True
+
+        logger.warning(
+            "Denied provisioning retry from Discord "
+            "user %s.",
+            interaction.user.id,
+        )
+
+        await interaction.response.send_message(
+            "Only the ChimeBuddy developer can retry "
+            "broadcaster provisioning.",
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(
+        label="Retry provisioning",
+        style=discord.ButtonStyle.primary,
+        custom_id=RETRY_PROVISIONING_BUTTON_CUSTOM_ID,
+        emoji="🔄",
+    )
+    async def retry_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.handle_retry_provisioning(
+            interaction,
+            self.request_id,
+        )
+
+
 class DiscordReviewController:
     """Publishes and safely decides broadcaster requests."""
 
@@ -445,6 +501,28 @@ class DiscordReviewController:
             self,
             request_id,
         )
+
+    def create_view_for_request(
+        self,
+        request: BroadcasterRequest,
+    ) -> discord.ui.View | None:
+        if (
+            request.status
+            is BroadcasterRequestStatus.PENDING
+        ):
+            return self.create_view(request.request_id)
+
+        if (
+            request.status
+            is BroadcasterRequestStatus
+            .PROVISIONING_FAILED
+        ):
+            return RetryProvisioningView(
+                self,
+                request.request_id,
+            )
+
+        return None
 
     async def configure_channel(
         self,
@@ -534,12 +612,7 @@ class DiscordReviewController:
             await self._load_identities(request)
         )
 
-        view = (
-            self.create_view(request.request_id)
-            if request.status
-            is BroadcasterRequestStatus.PENDING
-            else None
-        )
+        view = self.create_view_for_request(request)
 
         try:
             message = await channel.send(
@@ -662,16 +735,9 @@ class DiscordReviewController:
                 )
                 continue
 
-            view = None
+            view = self.create_view_for_request(request)
 
-            if (
-                request.status
-                is BroadcasterRequestStatus.PENDING
-            ):
-                view = self.create_view(
-                    request.request_id
-                )
-
+            if view is not None:
                 client.add_view(
                     view,
                     message_id=message_id,
@@ -815,6 +881,137 @@ class DiscordReviewController:
                     "An unexpected error occurred during "
                     "provisioning. Check the request "
                     "status and logs."
+                )
+            )
+            return
+
+        active_request = (
+            await self.request_repository.get(
+                request_id
+            )
+        )
+
+        if active_request is not None:
+            await self._refresh_interaction_message(
+                interaction,
+                active_request,
+            )
+
+            notified = await self._notify_approved(
+                interaction.client,
+                active_request,
+                result.discord_channel_id,
+            )
+        else:
+            notified = False
+
+        notification_text = (
+            "The broadcaster was notified by DM."
+            if notified
+            else (
+                "Provisioning succeeded, but the "
+                "broadcaster could not be reached by DM."
+            )
+        )
+
+        await interaction.edit_original_response(
+            content=(
+                f"Request `{request_id}` is now active.\n\n"
+                "Private broadcaster channel: "
+                f"<#{result.discord_channel_id}>\n\n"
+                f"{notification_text}"
+            )
+        )
+
+    async def handle_retry_provisioning(
+        self,
+        interaction: discord.Interaction,
+        request_id: int,
+    ) -> None:
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True,
+        )
+
+        if self.provisioning_service is None:
+            await interaction.edit_original_response(
+                content=(
+                    "Automatic broadcaster provisioning "
+                    "is not configured."
+                )
+            )
+            return
+
+        try:
+            result = (
+                await self.provisioning_service.provision(
+                    request_id,
+                    actor_discord_user_id=str(
+                        interaction.user.id
+                    ),
+                )
+            )
+
+        except BroadcasterProvisioningFailedError:
+            logger.exception(
+                "Provisioning retry failed for request %s.",
+                request_id,
+            )
+
+            failed_request = (
+                await self.request_repository.get(
+                    request_id
+                )
+            )
+
+            if failed_request is not None:
+                await self._refresh_interaction_message(
+                    interaction,
+                    failed_request,
+                )
+
+            await interaction.edit_original_response(
+                content=(
+                    f"Provisioning retry for request "
+                    f"`{request_id}` failed.\n\n"
+                    "The broadcaster remains disabled and "
+                    "the retry button is still available."
+                )
+            )
+            return
+
+        except BroadcasterProvisioningStateError:
+            current_request = (
+                await self.request_repository.get(
+                    request_id
+                )
+            )
+
+            if current_request is not None:
+                await self._refresh_interaction_message(
+                    interaction,
+                    current_request,
+                )
+
+            await interaction.edit_original_response(
+                content=(
+                    f"Request `{request_id}` is no longer "
+                    "waiting for a provisioning retry."
+                )
+            )
+            return
+
+        except Exception:
+            logger.exception(
+                "Unexpected provisioning retry failure "
+                "for request %s.",
+                request_id,
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "An unexpected error occurred while "
+                    "retrying provisioning."
                 )
             )
             return
@@ -1203,7 +1400,7 @@ class DiscordReviewController:
         return await self._refresh_message(
             interaction.message,
             request,
-            view=None,
+            view=self.create_view_for_request(request),
         )
 
     async def _refresh_message(
