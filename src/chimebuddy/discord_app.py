@@ -48,6 +48,9 @@ from chimebuddy.twitch.oauth_client import (
 from chimebuddy.discord_admin.review import (
     DiscordReviewController,
 )
+from chimebuddy.discord_admin.request_status import (
+    DiscordRequestStatusController,
+)
 from chimebuddy.discord_admin.provisioning import (
     DiscordBroadcasterPanelGateway,
 )
@@ -259,6 +262,14 @@ async def run(settings: Settings) -> None:
         )
     )
 
+    request_status_controller = (
+        DiscordRequestStatusController(
+            request_repository=request_repository,
+            identity_repository=identity_repository,
+            panel_repository=panel_repository,
+        )
+    )
+
     async with aiohttp.ClientSession() as session:
         device_client = (
             TwitchDeviceAuthorizationClient(
@@ -324,6 +335,9 @@ async def run(settings: Settings) -> None:
             review_controller=review_controller,
             broadcaster_panel_controller=(
                 broadcaster_panel_controller
+            ),
+            request_status_controller=(
+                request_status_controller
             ),
         )
 

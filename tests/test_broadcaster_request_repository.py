@@ -109,6 +109,36 @@ class BroadcasterRequestRepositoryTests(
         ):
             await self.create_request()
 
+    async def test_latest_request_includes_closed_requests(
+        self,
+    ) -> None:
+        created = await self.create_request()
+
+        await self.repository.transition(
+            created.request_id,
+            expected_statuses=(
+                BroadcasterRequestStatus.PENDING,
+            ),
+            new_status=BroadcasterRequestStatus.REJECTED,
+            event_type="request_rejected",
+        )
+
+        latest = (
+            await self.repository.get_latest_for_discord(
+                "123"
+            )
+        )
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(
+            latest.request_id,
+            created.request_id,
+        )
+        self.assertEqual(
+            latest.status,
+            BroadcasterRequestStatus.REJECTED,
+        )
+
     async def test_transition_is_atomic(
         self,
     ) -> None:

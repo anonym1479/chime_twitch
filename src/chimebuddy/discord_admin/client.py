@@ -12,6 +12,9 @@ from chimebuddy.discord_admin.status_service import (
 from chimebuddy.discord_admin.review import (
     DiscordReviewController,
 )
+from chimebuddy.discord_admin.request_status import (
+    DiscordRequestStatusController,
+)
 from chimebuddy.discord_admin.broadcaster_panel import (
     DiscordBroadcasterPanelController,
 )
@@ -50,6 +53,9 @@ class ChimeBuddyDiscordClient(discord.Client):
         broadcaster_panel_controller: (
             DiscordBroadcasterPanelController | None
         ) = None,
+        request_status_controller: (
+            DiscordRequestStatusController | None
+        ) = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -73,6 +79,9 @@ class ChimeBuddyDiscordClient(discord.Client):
         self.review_controller = review_controller
         self.broadcaster_panel_controller = (
             broadcaster_panel_controller
+        )
+        self.request_status_controller = (
+            request_status_controller
         )
 
         self.command_tree = app_commands.CommandTree(
@@ -100,6 +109,27 @@ class ChimeBuddyDiscordClient(discord.Client):
             ),
             guild=self.guild_object,
         )
+
+        if self.request_status_controller is not None:
+            async def request_status_command(
+                interaction: discord.Interaction,
+            ) -> None:
+                await (
+                    self.request_status_controller
+                    .handle_status(interaction)
+                )
+
+            self.command_tree.add_command(
+                app_commands.Command(
+                    name="request-status",
+                    description=(
+                        "Privately show your latest "
+                        "ChimeBuddy request."
+                    ),
+                    callback=request_status_command,
+                ),
+                guild=self.guild_object,
+            )
 
         if self.onboarding_controller is not None:
             async def setup_onboarding_command(

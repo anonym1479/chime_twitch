@@ -185,6 +185,37 @@ class BroadcasterRequestRepository:
 
         return self._request_from_row(row)
 
+    async def get_latest_for_discord(
+        self,
+        discord_user_id: str,
+    ) -> BroadcasterRequest | None:
+        """Return the user's newest request, including closed ones."""
+
+        discord_id = self._required_text(
+            discord_user_id,
+            "discord_user_id",
+        )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT *
+                FROM broadcaster_requests
+                WHERE discord_user_id = ?
+                ORDER BY request_id DESC
+                LIMIT 1
+                """,
+                (discord_id,),
+            )
+
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        if row is None:
+            return None
+
+        return self._request_from_row(row)
+
     async def list_by_status(
         self,
         statuses: Iterable[
