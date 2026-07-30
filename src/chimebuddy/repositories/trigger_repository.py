@@ -158,6 +158,214 @@ class TriggerRepository:
             for row in rows
         ]
 
+    async def update_inactive_trigger(
+        self,
+        trigger: Trigger,
+    ) -> bool:
+        """
+        Update a trigger only while its runtime state is
+        inactive.
+
+        The broadcaster ID is part of the ownership check.
+        """
+
+        if trigger.trigger_id is None:
+            raise ValueError(
+                "A stored trigger ID is required."
+            )
+
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                cursor = await connection.execute(
+                    """
+                    SELECT
+                        triggers.broadcaster_twitch_user_id,
+                        trigger_runtime_state.status
+                    FROM triggers
+                    JOIN trigger_runtime_state
+                        ON trigger_runtime_state.trigger_id =
+                           triggers.trigger_id
+                    WHERE triggers.trigger_id = ?
+                    """,
+                    (trigger.trigger_id,),
+                )
+
+                current = await cursor.fetchone()
+                await cursor.close()
+
+                if (
+                    current is None
+                    or current[
+                        "broadcaster_twitch_user_id"
+                    ]
+                    != trigger.broadcaster_twitch_user_id
+                    or current["status"] != "inactive"
+                ):
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    SELECT trigger_id
+                    FROM triggers
+                    WHERE broadcaster_twitch_user_id = ?
+                      AND name = ? COLLATE NOCASE
+                      AND trigger_id != ?
+                    """,
+                    (
+                        trigger.broadcaster_twitch_user_id,
+                        trigger.name,
+                        trigger.trigger_id,
+                    ),
+                )
+
+                duplicate = await cursor.fetchone()
+                await cursor.close()
+
+                if duplicate is not None:
+                    raise DuplicateTriggerNameError(
+                        f"A trigger named '{trigger.name}' "
+                        "already exists for this "
+                        "broadcaster."
+                    )
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE triggers
+                    SET
+                        name = ?,
+                        source = ?,
+                        match_type = ?,
+                        expression = ?,
+                        response_message = ?,
+                        pin_message = ?,
+                        priority = ?,
+                        enabled = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE trigger_id = ?
+                      AND broadcaster_twitch_user_id = ?
+                    """,
+                    (
+                        trigger.name,
+                        trigger.source.value,
+                        trigger.match_type.value,
+                        trigger.expression,
+                        trigger.response_message,
+                        int(trigger.pin_message),
+                        trigger.priority,
+                        int(trigger.enabled),
+                        trigger.trigger_id,
+                        trigger.broadcaster_twitch_user_id,
+                    ),
+                )
+
+                changed = cursor.rowcount == 1
+                await cursor.close()
+
+                if not changed:
+                    await connection.rollback()
+                    return False
+
+                await connection.commit()
+                return True
+
+            except Exception:
+                if connection.in_transaction:
+                    await connection.rollback()
+                raise
+
+    async def set_trigger_enabled_for_broadcaster(
+        self,
+        trigger_id: int,
+        broadcaster_twitch_user_id: str,
+        enabled: bool,
+    ) -> bool:
+        """Change enabled state with an ownership check."""
+
+        broadcaster_id = str(
+            broadcaster_twitch_user_id
+        ).strip()
+
+        if not broadcaster_id:
+            raise ValueError(
+                "broadcaster_twitch_user_id cannot be "
+                "empty."
+            )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE triggers
+                SET
+                    enabled = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE trigger_id = ?
+                  AND broadcaster_twitch_user_id = ?
+                """,
+                (
+                    int(enabled),
+                    int(trigger_id),
+                    broadcaster_id,
+                ),
+            )
+
+            changed = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return changed
+
+    async def delete_inactive_trigger(
+        self,
+        trigger_id: int,
+        broadcaster_twitch_user_id: str,
+    ) -> bool:
+        """
+        Delete only an owned trigger whose runtime state
+        has completed cleanup.
+        """
+
+        broadcaster_id = str(
+            broadcaster_twitch_user_id
+        ).strip()
+
+        if not broadcaster_id:
+            raise ValueError(
+                "broadcaster_twitch_user_id cannot be "
+                "empty."
+            )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                DELETE FROM triggers
+                WHERE trigger_id = ?
+                  AND broadcaster_twitch_user_id = ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM trigger_runtime_state
+                      WHERE
+                          trigger_runtime_state.trigger_id =
+                              triggers.trigger_id
+                          AND
+                          trigger_runtime_state.status =
+                              'inactive'
+                  )
+                """,
+                (
+                    int(trigger_id),
+                    broadcaster_id,
+                ),
+            )
+
+            deleted = cursor.rowcount == 1
+            await cursor.close()
+            await connection.commit()
+
+        return deleted
+
     async def set_trigger_enabled(
         self,
         trigger_id: int,

@@ -2,6 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from dataclasses import replace
 
 from chimebuddy.database import Database
 from chimebuddy.models import (
@@ -384,6 +385,161 @@ class TriggerRepositoryTests(
 
         self.assertTrue(cleanup_claimed)
 
+    async def test_updates_inactive_trigger(
+        self,
+    ) -> None:
+        trigger = await self.create_solo_trigger()
+
+        updated = replace(
+            trigger,
+            name="Updated Solo Mode",
+            expression="ranked solo",
+            response_message=(
+                "Ranked solo mode is active."
+            ),
+            priority=25,
+            pin_message=False,
+        )
+
+        changed = (
+            await self.repository
+            .update_inactive_trigger(updated)
+        )
+
+        stored = await self.repository.get_trigger(
+            trigger.trigger_id
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            stored.name,
+            "Updated Solo Mode",
+        )
+        self.assertEqual(
+            stored.expression,
+            "ranked solo",
+        )
+        self.assertEqual(stored.priority, 25)
+        self.assertFalse(stored.pin_message)
+
+    async def test_active_trigger_cannot_be_edited(
+        self,
+    ) -> None:
+        trigger = await self.create_solo_trigger()
+
+        await self.repository.claim_activation(
+            trigger.trigger_id,
+            "Solo gameplay",
+        )
+        await self.repository.complete_activation(
+            trigger.trigger_id,
+            "message-123",
+            is_pinned=True,
+        )
+
+        changed = (
+            await self.repository
+            .update_inactive_trigger(
+                replace(
+                    trigger,
+                    response_message="Unsafe edit.",
+                )
+            )
+        )
+
+        stored = await self.repository.get_trigger(
+            trigger.trigger_id
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            stored.response_message,
+            "Solo mode is active.",
+        )
+
+    async def test_active_trigger_cannot_be_deleted(
+        self,
+    ) -> None:
+        trigger = await self.create_solo_trigger()
+
+        await self.repository.claim_activation(
+            trigger.trigger_id,
+            "Solo gameplay",
+        )
+        await self.repository.complete_activation(
+            trigger.trigger_id,
+            "message-123",
+            is_pinned=True,
+        )
+
+        deleted = (
+            await self.repository
+            .delete_inactive_trigger(
+                trigger.trigger_id,
+                "211164044",
+            )
+        )
+
+        stored = await self.repository.get_trigger(
+            trigger.trigger_id
+        )
+
+        self.assertFalse(deleted)
+        self.assertIsNotNone(stored)
+
+    async def test_owned_inactive_trigger_can_be_deleted(
+        self,
+    ) -> None:
+        trigger = await self.create_solo_trigger()
+
+        deleted = (
+            await self.repository
+            .delete_inactive_trigger(
+                trigger.trigger_id,
+                "211164044",
+            )
+        )
+
+        stored = await self.repository.get_trigger(
+            trigger.trigger_id
+        )
+        state = await self.repository.get_runtime_state(
+            trigger.trigger_id
+        )
+
+        self.assertTrue(deleted)
+        self.assertIsNone(stored)
+        self.assertIsNone(state)
+
+    async def test_wrong_broadcaster_cannot_modify_trigger(
+        self,
+    ) -> None:
+        trigger = await self.create_solo_trigger()
+
+        changed = (
+            await self.repository
+            .set_trigger_enabled_for_broadcaster(
+                trigger.trigger_id,
+                "different-broadcaster",
+                False,
+            )
+        )
+
+        deleted = (
+            await self.repository
+            .delete_inactive_trigger(
+                trigger.trigger_id,
+                "different-broadcaster",
+            )
+        )
+
+        stored = await self.repository.get_trigger(
+            trigger.trigger_id
+        )
+
+        self.assertFalse(changed)
+        self.assertFalse(deleted)
+        self.assertTrue(stored.enabled)
 
 if __name__ == "__main__":
     unittest.main()

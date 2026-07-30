@@ -64,6 +64,16 @@ from chimebuddy.services.broadcaster_lifecycle_service import (
     BroadcasterNotFoundError,
     BroadcasterResumeBlockedError,
 )
+from chimebuddy.services.trigger_management_service import (
+    ManagedBroadcasterNotFoundError,
+    ManagedTriggerNotFoundError,
+    TriggerBusyError,
+    TriggerLimitReachedError,
+    TriggerManagementError,
+    TriggerManagementService,
+    TriggerNameConflictError,
+    TriggerValidationError,
+)
 
 __all__ = [
     "ChatGateway",
@@ -112,4 +122,12 @@ __all__ = [
     "BroadcasterLifecycleService",
     "BroadcasterNotFoundError",
     "BroadcasterResumeBlockedError",
+    "ManagedBroadcasterNotFoundError",
+    "ManagedTriggerNotFoundError",
+    "TriggerBusyError",
+    "TriggerLimitReachedError",
+    "TriggerManagementError",
+    "TriggerManagementService",
+    "TriggerNameConflictError",
+    "TriggerValidationError",
 ]
