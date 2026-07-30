@@ -6,6 +6,7 @@ from chimebuddy.discord_admin.broadcaster_panel import (
     BroadcasterManagementView,
 )
 from chimebuddy.discord_admin.trigger_management import (
+    DiscordTriggerManagementController,
     TriggerListView,
     build_trigger_list_embed,
     parse_match_type,
@@ -24,6 +25,73 @@ from chimebuddy.services import (
 class FakeTriggerController:
     def can_manage(self, discord_user_id, status):
         return True
+
+
+class FakeInteractionResponse:
+    def __init__(self) -> None:
+        self.deferred = None
+        self.messages = []
+        self.modals = []
+
+    async def defer(self, **kwargs) -> None:
+        self.deferred = kwargs
+
+    async def send_message(self, *args, **kwargs) -> None:
+        self.messages.append((args, kwargs))
+
+    async def send_modal(self, modal) -> None:
+        self.modals.append(modal)
+
+
+class FakeInteraction:
+    def __init__(self, user_id=123) -> None:
+        self.user = SimpleNamespace(id=user_id)
+        self.response = FakeInteractionResponse()
+        self.edits = []
+        self.message = None
+
+    async def edit_original_response(self, **kwargs) -> None:
+        self.edits.append(kwargs)
+
+
+class FakeStatusService:
+    def __init__(self, status) -> None:
+        self.status = status
+        self.loaded_ids = []
+
+    async def get_for_broadcaster(self, twitch_user_id):
+        self.loaded_ids.append(twitch_user_id)
+        return self.status
+
+
+class FakeManagementService:
+    def __init__(self, triggers=None) -> None:
+        self.triggers = list(triggers or [])
+        self.created_kwargs = None
+
+    async def list_triggers(self, twitch_user_id):
+        return list(self.triggers)
+
+    async def create_trigger(self, twitch_user_id, **kwargs):
+        self.created_kwargs = {
+            "twitch_user_id": twitch_user_id,
+            **kwargs,
+        }
+        trigger = Trigger(
+            trigger_id=2,
+            broadcaster_twitch_user_id=twitch_user_id,
+            name=kwargs["name"].strip(),
+            expression=kwargs["expression"].strip(),
+            response_message=(
+                kwargs["response_message"].strip()
+            ),
+            match_type=kwargs["match_type"],
+            priority=kwargs["priority"],
+            pin_message=kwargs["pin_message"],
+            enabled=kwargs["enabled"],
+        )
+        self.triggers.append(trigger)
+        return trigger
 
 
 class DiscordTriggerManagementTests(
@@ -229,6 +297,105 @@ class DiscordTriggerManagementTests(
         self.assertIn(
             TITLE_TRIGGERS_BUTTON_CUSTOM_ID,
             custom_ids,
+        )
+
+
+class DiscordTriggerManagementControllerTests(
+    unittest.IsolatedAsyncioTestCase
+):
+    def build_status(self):
+        return SimpleNamespace(
+            twitch_user_id="456",
+            twitch_login="example_streamer",
+            owner_discord_user_id="123",
+        )
+
+    async def test_show_triggers_lists_private_controls(
+        self,
+    ) -> None:
+        trigger = Trigger(
+            trigger_id=1,
+            broadcaster_twitch_user_id="456",
+            name="Solo Mode",
+            expression="solo",
+            response_message="Solo is active.",
+        )
+        controller = DiscordTriggerManagementController(
+            management_service=FakeManagementService(
+                [trigger]
+            ),
+            status_service=FakeStatusService(
+                self.build_status()
+            ),
+            developer_discord_user_id=999,
+        )
+        interaction = FakeInteraction(user_id=123)
+
+        await controller.show_triggers(
+            interaction,
+            "456",
+        )
+
+        self.assertTrue(
+            interaction.response.deferred["ephemeral"]
+        )
+        self.assertEqual(len(interaction.edits), 1)
+        self.assertIn(
+            "Title triggers",
+            interaction.edits[0]["embed"].title,
+        )
+        self.assertIsInstance(
+            interaction.edits[0]["view"],
+            TriggerListView,
+        )
+
+    async def test_create_trigger_uses_discord_input(
+        self,
+    ) -> None:
+        management_service = FakeManagementService()
+        controller = DiscordTriggerManagementController(
+            management_service=management_service,
+            status_service=FakeStatusService(
+                self.build_status()
+            ),
+            developer_discord_user_id=999,
+        )
+        interaction = FakeInteraction(user_id=123)
+
+        await controller.create_trigger(
+            interaction,
+            twitch_user_id="456",
+            name=" Solo Mode ",
+            expression=" solo ",
+            response_message=" Solo is active. ",
+            match_type_text="contains",
+            priority_text="25",
+        )
+
+        self.assertEqual(
+            management_service.created_kwargs[
+                "match_type"
+            ],
+            TriggerMatchType.CONTAINS,
+        )
+        self.assertEqual(
+            management_service.created_kwargs[
+                "priority"
+            ],
+            25,
+        )
+        self.assertTrue(
+            management_service.created_kwargs[
+                "pin_message"
+            ]
+        )
+        self.assertIn(
+            "was created",
+            interaction.edits[0]["content"],
+        )
+        self.assertIsInstance(
+            interaction.edits[0]["view"],
+            TriggerListView,
         )
 
 
