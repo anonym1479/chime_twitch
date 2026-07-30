@@ -145,6 +145,7 @@ def create_service(
     *,
     websocket=None,
     handler=None,
+    status_observer=None,
 ):
     if websocket is None:
         websocket = FakeWebSocket([])
@@ -162,6 +163,7 @@ def create_service(
         ),
         chat_message_handler=handler,
         reconnect_delay_seconds=0,
+        status_observer=status_observer,
     )
 
     return service, subscription_client, handler
@@ -211,6 +213,53 @@ class EventSubWebSocketTests(
         )
         self.assertTrue(websocket.closed)
 
+    async def test_reports_connection_health(
+        self,
+    ) -> None:
+        import asyncio
+
+        stop_event = asyncio.Event()
+        handler = RecordingHandler(stop_event)
+        statuses = []
+
+        async def observe(
+            status,
+            broadcaster_ids,
+            error_code,
+            safe_message,
+        ):
+            statuses.append(
+                (
+                    status,
+                    broadcaster_ids,
+                    error_code,
+                    safe_message,
+                )
+            )
+
+        service, _, _ = create_service(
+            websocket=FakeWebSocket(
+                [
+                    welcome_envelope(),
+                    chat_envelope(),
+                ]
+            ),
+            handler=handler,
+            status_observer=observe,
+        )
+
+        await service.run(stop_event)
+
+        self.assertEqual(
+            [item[0] for item in statuses],
+            ["connecting", "healthy", "stopped"],
+        )
+        self.assertTrue(
+            all(
+                item[1] == ("211164044",)
+                for item in statuses
+            )
+        )
     async def test_duplicate_event_is_ignored(
         self,
     ) -> None:

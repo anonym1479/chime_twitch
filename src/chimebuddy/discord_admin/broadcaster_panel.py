@@ -153,6 +153,32 @@ def build_broadcaster_management_embed(
         inline=False,
     )
     embed.add_field(
+        name="Runtime health",
+        value=(
+            "Authorization: "
+            f"{_render_health(status.token_health)}\n"
+            "Twitch chat: "
+            f"{_render_health(status.eventsub_health)}\n"
+            "Title checks: "
+            f"{_render_health(status.title_monitor_health)}"
+        ),
+        inline=False,
+    )
+
+    if status.recent_runtime_errors:
+        embed.add_field(
+            name="Recent service notices",
+            value="\n".join(
+                (
+                    f"• {error.safe_message} "
+                    f"({error.created_at} UTC)"
+                )
+                for error
+                in status.recent_runtime_errors
+            ),
+            inline=False,
+        )
+    embed.add_field(
         name="Available controls",
         value=(
             "🔄 **Refresh status** — reload this panel.\n\n"
@@ -179,6 +205,33 @@ def build_broadcaster_management_embed(
     )
 
     return embed
+
+
+def _render_health(snapshot) -> str:
+    if snapshot is None:
+        return "⚪ Waiting for the Twitch worker"
+
+    indicators = {
+        "healthy": "🟢",
+        "connecting": "🔵",
+        "waiting": "⚪",
+        "stopped": "⚪",
+        "degraded": "🟠",
+        "reconnecting": "🟠",
+        "reauthorization_required": "🔴",
+        "error": "🔴",
+    }
+    indicator = indicators.get(snapshot.status, "⚪")
+    label = snapshot.status.replace("_", " ")
+    timestamp = (
+        snapshot.last_success_at
+        or snapshot.updated_at
+    )
+
+    return (
+        f"{indicator} {label.title()} "
+        f"— {timestamp} UTC"
+    )
 
 
 class BroadcasterManagementView(discord.ui.View):

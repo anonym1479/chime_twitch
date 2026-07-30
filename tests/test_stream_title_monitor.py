@@ -218,6 +218,28 @@ class StreamTitleMonitorTests(
             ],
         )
 
+    async def test_reports_each_check_to_observer(
+        self,
+    ) -> None:
+        observed = []
+
+        async def observe(check):
+            observed.append(check)
+
+        monitor = StreamTitleMonitor(
+            FakeIdentityRepository(["100"]),
+            FakeStreamGateway({"100": None}),
+            FakeTriggerCoordinator(),
+            check_observer=observe,
+        )
+
+        report = await monitor.check_once()
+
+        self.assertEqual(
+            observed,
+            [report.checks[0]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

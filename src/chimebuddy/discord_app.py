@@ -27,6 +27,7 @@ from chimebuddy.repositories import (
     BroadcasterRequestRepository,
     IdentityRepository,
     OAuthCredentialRepository,
+    RuntimeHealthRepository,
     BroadcasterPanelRepository,
     TriggerRepository,
 )
@@ -126,6 +127,9 @@ async def run(settings: Settings) -> None:
     trigger_repository = (
         TriggerRepository(database)
     )
+    runtime_health_repository = (
+        RuntimeHealthRepository(database)
+    )
 
     settings_repository = (
         AppSettingsRepository(database)
@@ -146,6 +150,9 @@ async def run(settings: Settings) -> None:
                 credential_repository
             ),
             trigger_repository=trigger_repository,
+            runtime_health_repository=(
+                runtime_health_repository
+            ),
         )
     )
 

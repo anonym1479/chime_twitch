@@ -35,6 +35,9 @@ from chimebuddy.repositories.trigger_repository import (
 from chimebuddy.repositories.app_settings_repository import (
     AppSettingsRepository,
 )
+from chimebuddy.repositories.runtime_health_repository import (
+    RuntimeHealthRepository,
+)
 
 __all__ = [
     "AccountLinkCompletionRepository",
@@ -52,6 +55,7 @@ __all__ = [
     "OpenBroadcasterRequestError",
     "PendingAccountLinkSessionError",
     "RepositoryError",
+    "RuntimeHealthRepository",
     "TriggerRepository",
     "AppSettingsRepository",
 ]

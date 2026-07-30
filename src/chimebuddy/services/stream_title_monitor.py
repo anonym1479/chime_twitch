@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -18,6 +19,11 @@ from chimebuddy.twitch.helix_gateway import (
 logger = logging.getLogger(
     "chimebuddy.twitch.title_monitor"
 )
+
+TitleCheckObserver = Callable[
+    ["BroadcasterTitleCheck"],
+    Awaitable[None],
+]
 
 
 class StreamInformationGateway(Protocol):
@@ -63,6 +69,7 @@ class StreamTitleMonitor:
         trigger_coordinator: TriggerCoordinator,
         *,
         poll_interval_seconds: int = 60,
+        check_observer: TitleCheckObserver | None = None,
     ) -> None:
         if poll_interval_seconds <= 0:
             raise ValueError(
@@ -79,6 +86,7 @@ class StreamTitleMonitor:
         self.poll_interval_seconds = (
             poll_interval_seconds
         )
+        self.check_observer = check_observer
 
     async def check_once(self) -> TitleMonitorReport:
         broadcasters = (
@@ -109,20 +117,20 @@ class StreamTitleMonitor:
                     broadcaster_id,
                 )
 
-                checks.append(
-                    BroadcasterTitleCheck(
-                        broadcaster_twitch_user_id=(
-                            broadcaster_id
-                        ),
-                        is_live=False,
-                        title="",
-                        trigger_report=None,
-                        error=(
-                            "Stream information failed: "
-                            f"{exc}"
-                        ),
-                    )
+                check = BroadcasterTitleCheck(
+                    broadcaster_twitch_user_id=(
+                        broadcaster_id
+                    ),
+                    is_live=False,
+                    title="",
+                    trigger_report=None,
+                    error=(
+                        "Stream information failed: "
+                        f"{exc}"
+                    ),
                 )
+                checks.append(check)
+                await self._notify_observer(check)
                 continue
 
             is_live = stream is not None
@@ -147,37 +155,53 @@ class StreamTitleMonitor:
                     broadcaster_id,
                 )
 
-                checks.append(
-                    BroadcasterTitleCheck(
-                        broadcaster_twitch_user_id=(
-                            broadcaster_id
-                        ),
-                        is_live=is_live,
-                        title=title,
-                        trigger_report=None,
-                        error=(
-                            "Trigger processing failed: "
-                            f"{exc}"
-                        ),
-                    )
-                )
-                continue
-
-            checks.append(
-                BroadcasterTitleCheck(
+                check = BroadcasterTitleCheck(
                     broadcaster_twitch_user_id=(
                         broadcaster_id
                     ),
                     is_live=is_live,
                     title=title,
-                    trigger_report=trigger_report,
-                    error=None,
+                    trigger_report=None,
+                    error=(
+                        "Trigger processing failed: "
+                        f"{exc}"
+                    ),
                 )
+                checks.append(check)
+                await self._notify_observer(check)
+                continue
+
+            check = BroadcasterTitleCheck(
+                broadcaster_twitch_user_id=(
+                    broadcaster_id
+                ),
+                is_live=is_live,
+                title=title,
+                trigger_report=trigger_report,
+                error=None,
             )
+            checks.append(check)
+            await self._notify_observer(check)
 
         return TitleMonitorReport(
             checks=tuple(checks)
         )
+
+    async def _notify_observer(
+        self,
+        check: BroadcasterTitleCheck,
+    ) -> None:
+        if self.check_observer is None:
+            return
+
+        try:
+            await self.check_observer(check)
+        except Exception:
+            logger.exception(
+                "Failed to persist title-monitor health "
+                "for broadcaster %s.",
+                check.broadcaster_twitch_user_id,
+            )
 
     async def run(
         self,

@@ -27,6 +27,10 @@ from chimebuddy.models.trigger import (
     TriggerRuntimeStatus,
     TriggerSource,
 )
+from chimebuddy.models.runtime_health import (
+    RuntimeErrorEvent,
+    RuntimeHealthSnapshot,
+)
 
 __all__ = [
     "AccountLink",
@@ -42,6 +46,8 @@ __all__ = [
     "DiscordAccount",
     "OAuthCredential",
     "OAuthCredentialKind",
+    "RuntimeErrorEvent",
+    "RuntimeHealthSnapshot",
     "OnboardingRequestEvent",
     "OPEN_BROADCASTER_REQUEST_STATUSES",
     "Trigger",

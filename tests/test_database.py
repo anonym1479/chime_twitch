@@ -22,6 +22,8 @@ EXPECTED_TABLES = {
     "broadcaster_panels",
     "broadcaster_blacklist",
     "onboarding_request_events",
+    "runtime_health",
+    "runtime_error_events",
 }
 
 
@@ -42,7 +44,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         applied_versions = await self.database.initialize()
 
         self.assertTrue(self.database_path.exists())
-        self.assertEqual(applied_versions, [1, 2, 3, 4, 5])
+        self.assertEqual(applied_versions, [1, 2, 3, 4, 5, 6])
 
         async with self.database.connect() as connection:
             cursor = await connection.execute(
@@ -66,7 +68,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         first_result = await self.database.initialize()
         second_result = await self.database.initialize()
 
-        self.assertEqual(first_result, [1, 2, 3, 4, 5])
+        self.assertEqual(first_result, [1, 2, 3, 4, 5, 6])
         self.assertEqual(second_result, [])
 
     async def test_identity_and_broadcaster_relationships(self) -> None:

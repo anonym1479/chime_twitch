@@ -5,7 +5,7 @@ import logging
 import signal
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 from chimebuddy.database import Database
 from chimebuddy.models import OAuthCredentialKind
@@ -13,9 +13,11 @@ from chimebuddy.models.chat import TwitchChatMessage
 from chimebuddy.repositories import (
     BroadcasterRequestRepository,
     IdentityRepository,
+    RuntimeHealthRepository,
     TriggerRepository,
 )
 from chimebuddy.services.stream_title_monitor import (
+    BroadcasterTitleCheck,
     StreamTitleMonitor,
 )
 from chimebuddy.services.trigger_coordinator import (
@@ -86,6 +88,79 @@ BROADCASTER_REAUTHORIZATION_ERRORS = (
     TokenClientMismatchError,
     TokenIdentityMismatchError,
 )
+
+
+async def _record_health_success(
+    repository: RuntimeHealthRepository | None,
+    component: str,
+    subject_id: str,
+    **kwargs: Any,
+) -> None:
+    if repository is None:
+        return
+
+    try:
+        await repository.mark_success(
+            component,
+            subject_id,
+            **kwargs,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to persist successful runtime health: "
+            "component=%s, subject_id=%s.",
+            component,
+            subject_id,
+        )
+
+
+async def _record_health_failure(
+    repository: RuntimeHealthRepository | None,
+    component: str,
+    subject_id: str,
+    **kwargs: Any,
+) -> None:
+    if repository is None:
+        return
+
+    try:
+        await repository.mark_failure(
+            component,
+            subject_id,
+            **kwargs,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to persist failed runtime health: "
+            "component=%s, subject_id=%s.",
+            component,
+            subject_id,
+        )
+
+
+async def _record_health_status(
+    repository: RuntimeHealthRepository | None,
+    component: str,
+    subject_id: str,
+    **kwargs: Any,
+) -> None:
+    if repository is None:
+        return
+
+    try:
+        await repository.set_status(
+            component,
+            subject_id,
+            **kwargs,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to persist runtime health status: "
+            "component=%s, subject_id=%s.",
+            component,
+            subject_id,
+        )
+
 
 class RoutedChatMessageHandler:
     """Logs chat messages and routes Twitch commands."""
@@ -170,6 +245,9 @@ def create_command_router(
 def create_title_monitor(
     database: Database,
     runtime: TwitchRuntime,
+    health_repository: (
+        RuntimeHealthRepository | None
+    ) = None,
 ) -> StreamTitleMonitor:
     identity_repository = IdentityRepository(database)
     trigger_repository = TriggerRepository(database)
@@ -182,6 +260,31 @@ def create_title_monitor(
         pin_gateway=runtime.helix_gateway,
     )
 
+    async def record_title_check(
+        check: BroadcasterTitleCheck,
+    ) -> None:
+        if health_repository is None:
+            return
+
+        if check.error is None:
+            await _record_health_success(
+                health_repository,
+                "title_monitor",
+                check.broadcaster_twitch_user_id,
+                details={"is_live": check.is_live},
+            )
+        else:
+            await _record_health_failure(
+                health_repository,
+                "title_monitor",
+                check.broadcaster_twitch_user_id,
+                error_code="title_check_failed",
+                safe_message=(
+                    "The latest stream-title check "
+                    "could not be completed."
+                ),
+            )
+
     return StreamTitleMonitor(
         identity_repository=identity_repository,
         stream_gateway=runtime.helix_gateway,
@@ -189,18 +292,58 @@ def create_title_monitor(
         poll_interval_seconds=(
             TITLE_POLL_INTERVAL_SECONDS
         ),
+        check_observer=record_title_check,
     )
 
 
 def create_eventsub_service(
     runtime: TwitchRuntime,
     broadcaster_twitch_user_ids: tuple[str, ...],
+    health_repository: (
+        RuntimeHealthRepository | None
+    ) = None,
 ) -> EventSubWebSocketService:
     logger.info(
         "Preparing EventSub chat reception for "
         "%s broadcaster(s).",
         len(broadcaster_twitch_user_ids),
     )
+
+    async def record_eventsub_status(
+        status: str,
+        broadcaster_ids: tuple[str, ...],
+        error_code: str | None,
+        safe_message: str | None,
+    ) -> None:
+        if health_repository is None:
+            return
+
+        for broadcaster_id in broadcaster_ids:
+            if (
+                error_code is not None
+                and safe_message is not None
+            ):
+                await _record_health_failure(
+                    health_repository,
+                    "eventsub",
+                    broadcaster_id,
+                    status=status,
+                    error_code=error_code,
+                    safe_message=safe_message,
+                )
+            elif status == "healthy":
+                await _record_health_success(
+                    health_repository,
+                    "eventsub",
+                    broadcaster_id,
+                )
+            else:
+                await _record_health_status(
+                    health_repository,
+                    "eventsub",
+                    broadcaster_id,
+                    status=status,
+                )
 
     return EventSubWebSocketService(
         session=runtime.session,
@@ -216,6 +359,7 @@ def create_eventsub_service(
                 create_command_router(runtime),
             )
         ),
+        status_observer=record_eventsub_status,
     )
 
 
@@ -467,6 +611,9 @@ async def validate_enabled_broadcaster_credentials(
     reauthorization_handler: (
         BroadcasterReauthorizationHandler
     ),
+    health_repository: (
+        RuntimeHealthRepository | None
+    ) = None,
 ) -> None:
     """
     Validate broadcasters independently.
@@ -487,8 +634,24 @@ async def validate_enabled_broadcaster_credentials(
                 OAuthCredentialKind.BROADCASTER,
                 BROADCASTER_CHAT_SCOPES,
             )
+            await _record_health_success(
+                health_repository,
+                "token_validation",
+                broadcaster_id,
+            )
 
         except BROADCASTER_REAUTHORIZATION_ERRORS as exc:
+            await _record_health_failure(
+                health_repository,
+                "token_validation",
+                broadcaster_id,
+                status="reauthorization_required",
+                error_code="reauthorization_required",
+                safe_message=(
+                    "Twitch authorization must be "
+                    "renewed."
+                ),
+            )
             await reauthorization_handler(
                 broadcaster_id,
                 str(exc),
@@ -503,6 +666,19 @@ async def validate_enabled_broadcaster_credentials(
             )
 
         except TwitchOAuthError:
+            await _record_health_failure(
+                health_repository,
+                "token_validation",
+                broadcaster_id,
+                status="degraded",
+                error_code=(
+                    "oauth_temporarily_unavailable"
+                ),
+                safe_message=(
+                    "Twitch authorization could not "
+                    "be checked and will be retried."
+                ),
+            )
             logger.exception(
                 "Temporary Twitch OAuth validation "
                 "failure for broadcaster %s. The "
@@ -520,6 +696,9 @@ async def token_validation_loop(
     ),
     stop_event: asyncio.Event,
     *,
+    health_repository: (
+        RuntimeHealthRepository | None
+    ) = None,
     validation_interval_seconds: float = (
         TOKEN_VALIDATION_INTERVAL_SECONDS
     ),
@@ -549,12 +728,32 @@ async def token_validation_loop(
 
         # Losing the bot credential is fatal because no
         # Twitch feature can operate safely without it.
-        await runtime.validate_bot_token()
+        try:
+            await runtime.validate_bot_token()
+        except Exception:
+            await _record_health_failure(
+                health_repository,
+                "token_validation",
+                runtime.bot_twitch_user_id,
+                error_code="bot_authorization_failed",
+                safe_message=(
+                    "The ChimeBuddy bot authorization "
+                    "could not be validated."
+                ),
+            )
+            raise
+        else:
+            await _record_health_success(
+                health_repository,
+                "token_validation",
+                runtime.bot_twitch_user_id,
+            )
 
         await validate_enabled_broadcaster_credentials(
             runtime,
             identity_repository,
             reauthorization_handler,
+            health_repository,
         )
 
         logger.info(
@@ -571,6 +770,9 @@ async def run_twitch_worker(
     runtime: TwitchRuntime,
 ) -> None:
     stop_event = asyncio.Event()
+    health_repository = RuntimeHealthRepository(
+        database
+    )
 
     remove_signal_handlers = (
         _install_signal_handlers(stop_event)
@@ -579,6 +781,7 @@ async def run_twitch_worker(
     title_monitor = create_title_monitor(
         database,
         runtime,
+        health_repository,
     )
 
     async def broadcaster_cleanup(
@@ -621,6 +824,13 @@ async def run_twitch_worker(
         runtime,
         identity_repository,
         require_reauthorization,
+        health_repository,
+    )
+
+    await _record_health_success(
+        health_repository,
+        "token_validation",
+        runtime.bot_twitch_user_id,
     )
 
     def eventsub_factory(
@@ -629,6 +839,7 @@ async def run_twitch_worker(
         return create_eventsub_service(
             runtime,
             broadcaster_ids,
+            health_repository,
         )
 
     tasks = [
@@ -642,6 +853,7 @@ async def run_twitch_worker(
                 identity_repository,
                 require_reauthorization,
                 stop_event,
+                health_repository=health_repository,
             ),
             name="token-validation",
         ),

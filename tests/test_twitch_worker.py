@@ -40,6 +40,7 @@ class FakeTokenManager:
 class FakeRuntime:
     def __init__(self, token_manager) -> None:
         self.token_manager = token_manager
+        self.bot_twitch_user_id = "bot-1"
         self.bot_validation_calls = 0
         self.bot_called_event = asyncio.Event()
 
@@ -120,6 +121,32 @@ class FakeBroadcasterCleanup:
         self.called.set()
 
 
+class FakeHealthRepository:
+    def __init__(self) -> None:
+        self.successes = []
+        self.failures = []
+
+    async def mark_success(
+        self,
+        component,
+        subject_id="",
+        **kwargs,
+    ):
+        self.successes.append(
+            (component, subject_id, kwargs)
+        )
+
+    async def mark_failure(
+        self,
+        component,
+        subject_id="",
+        **kwargs,
+    ):
+        self.failures.append(
+            (component, subject_id, kwargs)
+        )
+
+
 class TwitchWorkerTests(
     unittest.IsolatedAsyncioTestCase
 ):
@@ -192,6 +219,7 @@ class TwitchWorkerTests(
         repository = FakeIdentityRepository(
             ("100", "200")
         )
+        health_repository = FakeHealthRepository()
         reauthorization_calls = []
 
         async def handle_reauthorization(
@@ -206,6 +234,7 @@ class TwitchWorkerTests(
             runtime,
             repository,
             handle_reauthorization,
+            health_repository,
         )
 
         self.assertEqual(
@@ -213,6 +242,16 @@ class TwitchWorkerTests(
             [("100", "Refresh token rejected.")],
         )
         self.assertEqual(token_manager.calls, 2)
+        self.assertEqual(
+            health_repository.successes[0][:2],
+            ("token_validation", "200"),
+        )
+        self.assertEqual(
+            health_repository.failures[0][2][
+                "error_code"
+            ],
+            "reauthorization_required",
+        )
 
     async def test_eventsub_starts_for_enabled_channels(
         self,

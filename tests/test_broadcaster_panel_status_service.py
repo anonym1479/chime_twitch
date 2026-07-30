@@ -4,6 +4,9 @@ import unittest
 from pathlib import Path
 
 from chimebuddy.database import Database
+from chimebuddy.discord_admin.broadcaster_panel import (
+    build_broadcaster_management_embed,
+)
 from chimebuddy.models import (
     AccountLink,
     AccountLinkStatus,
@@ -21,6 +24,7 @@ from chimebuddy.repositories import (
     BroadcasterRequestRepository,
     IdentityRepository,
     OAuthCredentialRepository,
+    RuntimeHealthRepository,
     TriggerRepository,
 )
 from chimebuddy.services import (
@@ -68,6 +72,11 @@ class BroadcasterPanelStatusServiceTests(
         )
         self.trigger_repository = (
             TriggerRepository(
+                self.database
+            )
+        )
+        self.runtime_health_repository = (
+            RuntimeHealthRepository(
                 self.database
             )
         )
@@ -155,6 +164,24 @@ class BroadcasterPanelStatusServiceTests(
             )
         )
 
+        await self.runtime_health_repository.mark_success(
+            "token_validation",
+            "456",
+        )
+        await self.runtime_health_repository.mark_success(
+            "eventsub",
+            "456",
+        )
+        await self.runtime_health_repository.mark_failure(
+            "title_monitor",
+            "456",
+            error_code="title_check_failed",
+            safe_message=(
+                "The latest stream-title check could not "
+                "be completed."
+            ),
+        )
+
         self.service = BroadcasterPanelStatusService(
             panel_repository=self.panel_repository,
             identity_repository=(
@@ -168,6 +195,9 @@ class BroadcasterPanelStatusServiceTests(
             ),
             trigger_repository=(
                 self.trigger_repository
+            ),
+            runtime_health_repository=(
+                self.runtime_health_repository
             ),
         )
 
@@ -209,6 +239,22 @@ class BroadcasterPanelStatusServiceTests(
         self.assertIsNotNone(
             status.credential_expires_at
         )
+        self.assertEqual(
+            status.token_health.status,
+            "healthy",
+        )
+        self.assertEqual(
+            status.eventsub_health.status,
+            "healthy",
+        )
+        self.assertEqual(
+            status.title_monitor_health.status,
+            "error",
+        )
+        self.assertEqual(
+            len(status.recent_runtime_errors),
+            1,
+        )
 
     async def test_loads_status_from_channel(
         self,
@@ -226,6 +272,33 @@ class BroadcasterPanelStatusServiceTests(
         self.assertEqual(
             status.opening_message_id,
             "3000",
+        )
+
+    async def test_embed_shows_safe_runtime_health(
+        self,
+    ) -> None:
+        status = await self.service.get_for_broadcaster(
+            "456"
+        )
+        embed = build_broadcaster_management_embed(
+            status
+        )
+        fields = {
+            field.name: str(field.value)
+            for field in embed.fields
+        }
+
+        self.assertIn(
+            "Authorization: 🟢 Healthy",
+            fields["Runtime health"],
+        )
+        self.assertIn(
+            "Title checks: 🔴 Error",
+            fields["Runtime health"],
+        )
+        self.assertIn(
+            "stream-title check",
+            fields["Recent service notices"],
         )
 
     async def test_rejects_unknown_panel(

@@ -451,4 +451,48 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=6,
+        name="create_runtime_health_tables",
+        statements=(
+            """
+            CREATE TABLE runtime_health (
+                component TEXT NOT NULL,
+                subject_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                last_success_at TEXT,
+                last_failure_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (component, subject_id),
+
+                CHECK (length(trim(component)) > 0),
+                CHECK (length(trim(status)) > 0)
+            )
+            """,
+            """
+            CREATE TABLE runtime_error_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                component TEXT NOT NULL,
+                subject_id TEXT NOT NULL DEFAULT '',
+                error_code TEXT NOT NULL,
+                safe_message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                CHECK (length(trim(component)) > 0),
+                CHECK (length(trim(error_code)) > 0),
+                CHECK (length(trim(safe_message)) > 0)
+            )
+            """,
+            """
+            CREATE INDEX runtime_error_events_subject_created_idx
+            ON runtime_error_events(
+                subject_id,
+                created_at DESC,
+                event_id DESC
+            )
+            """,
+        ),
+    ),
 )

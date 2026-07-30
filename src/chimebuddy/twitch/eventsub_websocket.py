@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -47,6 +47,17 @@ class ChatMessageHandler(Protocol):
         """Handle one parsed Twitch chat message."""
 
 
+EventSubStatusObserver = Callable[
+    [
+        str,
+        tuple[str, ...],
+        str | None,
+        str | None,
+    ],
+    Awaitable[None],
+]
+
+
 @dataclass(frozen=True, slots=True)
 class EventSubWelcome:
     session_id: str
@@ -66,6 +77,9 @@ class EventSubWebSocketService:
         reconnect_delay_seconds: float = (
             DEFAULT_RECONNECT_DELAY_SECONDS
         ),
+        status_observer: (
+            EventSubStatusObserver | None
+        ) = None,
     ) -> None:
         broadcaster_ids = tuple(
             dict.fromkeys(
@@ -94,6 +108,7 @@ class EventSubWebSocketService:
         self.reconnect_delay_seconds = (
             reconnect_delay_seconds
         )
+        self.status_observer = status_observer
 
         self._recent_message_ids: deque[str] = deque()
         self._recent_message_id_set: set[str] = set()
@@ -105,6 +120,7 @@ class EventSubWebSocketService:
         logger.info(
             "Twitch EventSub WebSocket service started."
         )
+        await self._notify_status("connecting")
 
         while not stop_event.is_set():
             try:
@@ -115,6 +131,14 @@ class EventSubWebSocketService:
                 if stop_event.is_set():
                     break
 
+                await self._notify_status(
+                    "reconnecting",
+                    error_code="eventsub_connection_failed",
+                    safe_message=(
+                        "Twitch chat connection was "
+                        "interrupted and is reconnecting."
+                    ),
+                )
                 logger.exception(
                     "Twitch EventSub WebSocket "
                     "connection failed."
@@ -140,6 +164,7 @@ class EventSubWebSocketService:
         logger.info(
             "Twitch EventSub WebSocket service stopped."
         )
+        await self._notify_status("stopped")
 
     async def _run_connection(
         self,
@@ -150,14 +175,33 @@ class EventSubWebSocketService:
         )
 
         try:
-            await self._subscribe_all(
-                welcome.session_id
+            subscribed_ids, failed_ids = (
+                await self._subscribe_all(
+                    welcome.session_id
+                )
             )
 
             logger.info(
                 "Twitch EventSub session %s is ready.",
                 welcome.session_id,
             )
+            await self._notify_status(
+                "healthy",
+                broadcaster_ids=subscribed_ids,
+            )
+
+            if failed_ids:
+                await self._notify_status(
+                    "error",
+                    broadcaster_ids=failed_ids,
+                    error_code=(
+                        "eventsub_subscription_failed"
+                    ),
+                    safe_message=(
+                        "Twitch chat subscription could "
+                        "not be started."
+                    ),
+                )
 
             while not stop_event.is_set():
                 reconnect_url = (
@@ -247,10 +291,36 @@ class EventSubWebSocketService:
 
         return websocket, welcome
 
+    async def _notify_status(
+        self,
+        status: str,
+        error_code: str | None = None,
+        safe_message: str | None = None,
+        broadcaster_ids: tuple[str, ...] | None = None,
+    ) -> None:
+        if self.status_observer is None:
+            return
+
+        try:
+            await self.status_observer(
+                status,
+                (
+                    self.broadcaster_twitch_user_ids
+                    if broadcaster_ids is None
+                    else broadcaster_ids
+                ),
+                error_code,
+                safe_message,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist EventSub health."
+            )
+
     async def _subscribe_all(
         self,
         websocket_session_id: str,
-    ) -> None:
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         results = await asyncio.gather(
             *(
                 self.subscription_client.subscribe_to_chat(
@@ -263,7 +333,8 @@ class EventSubWebSocketService:
             return_exceptions=True,
         )
 
-        successful = 0
+        successful_ids = []
+        failed_ids = []
 
         for broadcaster_id, result in zip(
             self.broadcaster_twitch_user_ids,
@@ -271,6 +342,7 @@ class EventSubWebSocketService:
             strict=True,
         ):
             if isinstance(result, BaseException):
+                failed_ids.append(broadcaster_id)
                 logger.error(
                     "Failed to subscribe to chat for "
                     "broadcaster %s: %s",
@@ -279,7 +351,7 @@ class EventSubWebSocketService:
                 )
                 continue
 
-            successful += 1
+            successful_ids.append(broadcaster_id)
 
             logger.info(
                 "Subscribed to Twitch chat for "
@@ -287,10 +359,15 @@ class EventSubWebSocketService:
                 broadcaster_id,
             )
 
-        if successful == 0:
+        if not successful_ids:
             raise EventSubWebSocketError(
                 "No Twitch chat subscriptions succeeded."
             )
+
+        return (
+            tuple(successful_ids),
+            tuple(failed_ids),
+        )
 
     async def _consume_until_reconnect(
         self,

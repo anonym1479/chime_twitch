@@ -3,12 +3,15 @@ from dataclasses import dataclass
 from chimebuddy.models import (
     BroadcasterRequestStatus,
     OAuthCredentialKind,
+    RuntimeErrorEvent,
+    RuntimeHealthSnapshot,
 )
 from chimebuddy.repositories import (
     BroadcasterPanelRepository,
     BroadcasterRequestRepository,
     IdentityRepository,
     OAuthCredentialRepository,
+    RuntimeHealthRepository,
     TriggerRepository,
 )
 
@@ -54,6 +57,16 @@ class BroadcasterPanelStatus:
     discord_channel_id: str
     opening_message_id: str | None
 
+    token_health: RuntimeHealthSnapshot | None = None
+    eventsub_health: RuntimeHealthSnapshot | None = None
+    title_monitor_health: (
+        RuntimeHealthSnapshot | None
+    ) = None
+    recent_runtime_errors: tuple[
+        RuntimeErrorEvent,
+        ...,
+    ] = ()
+
     @property
     def disabled_triggers(self) -> int:
         return (
@@ -73,6 +86,9 @@ class BroadcasterPanelStatusService:
         request_repository: BroadcasterRequestRepository,
         credential_repository: OAuthCredentialRepository,
         trigger_repository: TriggerRepository,
+        runtime_health_repository: (
+            RuntimeHealthRepository | None
+        ) = None,
     ) -> None:
         self.panel_repository = panel_repository
         self.identity_repository = (
@@ -86,6 +102,9 @@ class BroadcasterPanelStatusService:
         )
         self.trigger_repository = (
             trigger_repository
+        )
+        self.runtime_health_repository = (
+            runtime_health_repository
         )
 
     async def get_for_broadcaster(
@@ -186,6 +205,41 @@ class BroadcasterPanelStatusService:
             )
         )
 
+        token_health = None
+        eventsub_health = None
+        title_monitor_health = None
+        recent_runtime_errors: tuple[
+            RuntimeErrorEvent,
+            ...,
+        ] = ()
+
+        if self.runtime_health_repository is not None:
+            token_health = (
+                await self.runtime_health_repository.get(
+                    "token_validation",
+                    panel.twitch_user_id,
+                )
+            )
+            eventsub_health = (
+                await self.runtime_health_repository.get(
+                    "eventsub",
+                    panel.twitch_user_id,
+                )
+            )
+            title_monitor_health = (
+                await self.runtime_health_repository.get(
+                    "title_monitor",
+                    panel.twitch_user_id,
+                )
+            )
+            recent_runtime_errors = tuple(
+                await self.runtime_health_repository
+                .list_recent_errors(
+                    panel.twitch_user_id,
+                    limit=3,
+                )
+            )
+
         return BroadcasterPanelStatus(
             request_id=panel.request_id,
             request_status=request.status,
@@ -230,5 +284,13 @@ class BroadcasterPanelStatusService:
             ),
             opening_message_id=(
                 panel.opening_message_id
+            ),
+            token_health=token_health,
+            eventsub_health=eventsub_health,
+            title_monitor_health=(
+                title_monitor_health
+            ),
+            recent_runtime_errors=(
+                recent_runtime_errors
             ),
         )
