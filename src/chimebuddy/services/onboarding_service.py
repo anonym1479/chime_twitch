@@ -228,6 +228,7 @@ class OnboardingService:
                 developer_discord_user_id
             ),
             decision_reason=rejection_reason,
+            delete_broadcaster_credential=True,
         )
 
     async def begin_provisioning(
@@ -309,6 +310,7 @@ class OnboardingService:
         event_type: str,
         actor_discord_user_id: str | None,
         decision_reason: str | None = None,
+        delete_broadcaster_credential: bool = False,
     ) -> BroadcasterRequest:
         actor_id = self._optional_text(
             actor_discord_user_id
@@ -321,6 +323,9 @@ class OnboardingService:
             event_type=event_type,
             actor_discord_user_id=actor_id,
             decision_reason=decision_reason,
+            delete_broadcaster_credential=(
+                delete_broadcaster_credential
+            ),
         )
 
         if not changed:

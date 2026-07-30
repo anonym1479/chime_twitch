@@ -225,6 +225,14 @@ class OnboardingServiceTests(
             "Testing capacity is currently full.",
         )
 
+        credential = (
+            await self.credential_repository.get(
+                "456",
+                OAuthCredentialKind.BROADCASTER,
+            )
+        )
+        self.assertIsNone(credential)
+
 
 if __name__ == "__main__":
     unittest.main()

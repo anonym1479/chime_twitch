@@ -289,6 +289,7 @@ class BroadcasterRequestRepository:
         actor_discord_user_id: str | None = None,
         decision_reason: str | None = None,
         details: dict[str, Any] | None = None,
+        delete_broadcaster_credential: bool = False,
     ) -> bool:
         expected = {
             BroadcasterRequestStatus(status)
@@ -431,6 +432,16 @@ class BroadcasterRequestRepository:
                     await connection.rollback()
                     return False
 
+                if delete_broadcaster_credential:
+                    await connection.execute(
+                        """
+                        DELETE FROM oauth_credentials
+                        WHERE twitch_user_id = ?
+                          AND credential_kind = 'broadcaster'
+                        """,
+                        (row["twitch_user_id"],),
+                    )
+
                 await self._insert_event(
                     connection,
                     request_id=int(request_id),
@@ -552,6 +563,15 @@ class BroadcasterRequestRepository:
                 if not changed:
                     await connection.rollback()
                     return False
+
+                await connection.execute(
+                    """
+                    DELETE FROM oauth_credentials
+                    WHERE twitch_user_id = ?
+                      AND credential_kind = 'broadcaster'
+                    """,
+                    (row["twitch_user_id"],),
+                )
 
                 await self._insert_event(
                     connection,

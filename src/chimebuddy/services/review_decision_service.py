@@ -104,6 +104,7 @@ class ReviewDecisionService:
                 event_type="request_rejected",
                 actor_discord_user_id=actor_id,
                 decision_reason=message,
+                delete_broadcaster_credential=True,
             )
         )
 

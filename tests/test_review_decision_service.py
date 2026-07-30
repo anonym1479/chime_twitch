@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -7,12 +8,15 @@ from chimebuddy.models import (
     BroadcasterRequest,
     BroadcasterRequestStatus,
     DiscordAccount,
+    OAuthCredential,
+    OAuthCredentialKind,
     TwitchAccount,
 )
 from chimebuddy.repositories import (
     BroadcasterBlacklistRepository,
     BroadcasterRequestRepository,
     IdentityRepository,
+    OAuthCredentialRepository,
 )
 from chimebuddy.services import (
     ReviewDecisionService,
@@ -65,6 +69,22 @@ class ReviewDecisionServiceTests(
                 self.database
             )
         )
+        self.credential_repository = (
+            OAuthCredentialRepository(self.database)
+        )
+
+        await self.credential_repository.save(
+            OAuthCredential(
+                twitch_user_id="456",
+                credential_kind=(
+                    OAuthCredentialKind.BROADCASTER
+                ),
+                access_token="test-access-token",
+                refresh_token="test-refresh-token",
+                scopes=("channel:bot",),
+                expires_at=int(time.time()) + 3600,
+            )
+        )
 
         self.blacklist_repository = (
             BroadcasterBlacklistRepository(
@@ -103,6 +123,12 @@ class ReviewDecisionServiceTests(
             "999",
         )
         self.assertIsNotNone(decided.decided_at)
+
+        credential = await self.credential_repository.get(
+            "456",
+            OAuthCredentialKind.BROADCASTER,
+        )
+        self.assertIsNotNone(credential)
 
         events = (
             await self.request_repository.list_events(
@@ -156,6 +182,12 @@ class ReviewDecisionServiceTests(
             "999",
         )
         self.assertIsNotNone(decided.decided_at)
+
+        credential = await self.credential_repository.get(
+            "456",
+            OAuthCredentialKind.BROADCASTER,
+        )
+        self.assertIsNone(credential)
 
     async def test_rejection_message_is_optional(
         self,
@@ -222,6 +254,12 @@ class ReviewDecisionServiceTests(
             events[-1].event_type,
             "request_blacklisted",
         )
+
+        credential = await self.credential_repository.get(
+            "456",
+            OAuthCredentialKind.BROADCASTER,
+        )
+        self.assertIsNone(credential)
 
     async def test_unknown_request_is_rejected(
         self,
