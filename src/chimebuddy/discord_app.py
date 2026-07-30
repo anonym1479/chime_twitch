@@ -28,12 +28,14 @@ from chimebuddy.repositories import (
     IdentityRepository,
     OAuthCredentialRepository,
     BroadcasterPanelRepository,
+    TriggerRepository,
 )
 from chimebuddy.services import (
     AccountLinkingService,
     OnboardingService,
     ReviewDecisionService,
     BroadcasterProvisioningService,
+    BroadcasterPanelStatusService,
 )
 from chimebuddy.twitch.device_authorization import (
     TwitchDeviceAuthorizationClient,
@@ -46,6 +48,9 @@ from chimebuddy.discord_admin.review import (
 )
 from chimebuddy.discord_admin.provisioning import (
     DiscordBroadcasterPanelGateway,
+)
+from chimebuddy.discord_admin.broadcaster_panel import (
+    DiscordBroadcasterPanelController,
 )
 
 
@@ -110,6 +115,9 @@ async def run(settings: Settings) -> None:
     panel_repository = (
         BroadcasterPanelRepository(database)
     )
+    trigger_repository = (
+        TriggerRepository(database)
+    )
 
     settings_repository = (
         AppSettingsRepository(database)
@@ -117,6 +125,32 @@ async def run(settings: Settings) -> None:
 
     status_service = DiscordAdminStatusService(
         identity_repository
+    )
+
+    broadcaster_panel_status_service = (
+        BroadcasterPanelStatusService(
+            panel_repository=panel_repository,
+            identity_repository=(
+                identity_repository
+            ),
+            request_repository=request_repository,
+            credential_repository=(
+                credential_repository
+            ),
+            trigger_repository=trigger_repository,
+        )
+    )
+
+    broadcaster_panel_controller = (
+        DiscordBroadcasterPanelController(
+            status_service=(
+                broadcaster_panel_status_service
+            ),
+            panel_repository=panel_repository,
+            developer_discord_user_id=(
+                settings.developer_discord_user_id
+            ),
+        )
     )
 
     onboarding_service = OnboardingService(
@@ -241,6 +275,9 @@ async def run(settings: Settings) -> None:
                 onboarding_controller
             ),
             review_controller=review_controller,
+            broadcaster_panel_controller=(
+                broadcaster_panel_controller
+            ),
         )
 
         panel_gateway.bind_client(client)

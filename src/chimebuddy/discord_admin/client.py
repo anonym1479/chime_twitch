@@ -12,6 +12,9 @@ from chimebuddy.discord_admin.status_service import (
 from chimebuddy.discord_admin.review import (
     DiscordReviewController,
 )
+from chimebuddy.discord_admin.broadcaster_panel import (
+    DiscordBroadcasterPanelController,
+)
 
 
 logger = logging.getLogger(
@@ -44,6 +47,9 @@ class ChimeBuddyDiscordClient(discord.Client):
         review_controller:(
             DiscordReviewController | None
         ) = None,
+        broadcaster_panel_controller: (
+            DiscordBroadcasterPanelController | None
+        ) = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -65,6 +71,9 @@ class ChimeBuddyDiscordClient(discord.Client):
             onboarding_controller
         )
         self.review_controller = review_controller
+        self.broadcaster_panel_controller = (
+            broadcaster_panel_controller
+        )
 
         self.command_tree = app_commands.CommandTree(
             self,
@@ -147,6 +156,14 @@ class ChimeBuddyDiscordClient(discord.Client):
                         self.review_controller
                         .restore_review_messages(self)
                     )
+        if (
+            self.broadcaster_panel_controller
+            is not None
+        ):
+            await (
+                self.broadcaster_panel_controller
+                .restore_panels(self)
+            )
 
         commands = await self.command_tree.sync(
             guild=self.guild_object
