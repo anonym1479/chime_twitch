@@ -79,6 +79,52 @@ def parse_trigger_id(
     return trigger_id
 
 
+def _short_text(
+    value: str,
+    maximum_length: int,
+) -> str:
+    text = str(value).strip()
+
+    if len(text) <= maximum_length:
+        return text
+
+    return text[: maximum_length - 1].rstrip() + "…"
+
+
+def _chunk_lines(
+    lines: list[str],
+    *,
+    maximum_length: int = 900,
+) -> list[str]:
+    chunks: list[str] = []
+    current_lines: list[str] = []
+    current_length = 0
+
+    for line in lines:
+        added_length = len(line) + (
+            1 if current_lines else 0
+        )
+
+        if (
+            current_lines
+            and current_length + added_length
+            > maximum_length
+        ):
+            chunks.append("\n".join(current_lines))
+            current_lines = []
+            current_length = 0
+
+        current_lines.append(line)
+        current_length += len(line) + (
+            1 if len(current_lines) > 1 else 0
+        )
+
+    if current_lines:
+        chunks.append("\n".join(current_lines))
+
+    return chunks
+
+
 def build_trigger_list_embed(
     status: BroadcasterPanelStatus,
     triggers: list[Trigger],
@@ -109,44 +155,95 @@ def build_trigger_list_embed(
             inline=False,
         )
     else:
-        for trigger in triggers:
-            enabled_text = (
-                "🟢 Enabled"
-                if trigger.enabled
-                else "⚫ Disabled"
-            )
+        summary_lines: list[str] = []
 
+        for trigger in triggers:
+            state_icon = (
+                "🟢" if trigger.enabled else "⚫"
+            )
             match_text = (
                 "contains"
                 if trigger.match_type
                 is TriggerMatchType.CONTAINS
+                else "exact"
+            )
+            selected_icon = (
+                "👉 "
+                if trigger.trigger_id
+                == selected_trigger_id
+                else ""
+            )
+
+            summary_lines.append(
+                f"{selected_icon}{state_icon} "
+                f"`#{trigger.trigger_id}` "
+                f"**{_short_text(trigger.name, 50)}** · "
+                f"{match_text} "
+                f"`{_short_text(trigger.expression, 60)}` · "
+                f"priority `{trigger.priority}`"
+            )
+
+        for index, chunk in enumerate(
+            _chunk_lines(summary_lines)
+        ):
+            embed.add_field(
+                name=(
+                    "Configured triggers"
+                    if index == 0
+                    else "Configured triggers continued"
+                ),
+                value=chunk,
+                inline=False,
+            )
+
+        selected_trigger = find_trigger(
+            triggers,
+            selected_trigger_id,
+        )
+
+        if selected_trigger is None:
+            embed.add_field(
+                name="Trigger controls",
+                value=(
+                    "Select a trigger below to view its "
+                    "full response and enable the Edit, "
+                    "Enable/Disable, and Delete controls."
+                ),
+                inline=False,
+            )
+        else:
+            enabled_text = (
+                "🟢 Enabled"
+                if selected_trigger.enabled
+                else "⚫ Disabled"
+            )
+            match_text = (
+                "contains"
+                if selected_trigger.match_type
+                is TriggerMatchType.CONTAINS
                 else "exactly matches"
             )
-
             pin_text = (
                 "Yes"
-                if trigger.pin_message
+                if selected_trigger.pin_message
                 else "No"
-            )
-
-            selected_text = (
-                "Selected · "
-                if trigger.trigger_id == selected_trigger_id
-                else ""
             )
 
             embed.add_field(
                 name=(
-                    f"{selected_text}#{trigger.trigger_id} — "
-                    f"{trigger.name}"
+                    f"Selected trigger "
+                    f"#{selected_trigger.trigger_id} — "
+                    f"{selected_trigger.name}"
                 ),
                 value=(
                     f"{enabled_text}\n"
                     f"Title {match_text}: "
-                    f"`{trigger.expression}`\n"
-                    f"Priority: `{trigger.priority}` · "
+                    f"`{selected_trigger.expression}`\n"
+                    f"Priority: "
+                    f"`{selected_trigger.priority}` · "
                     f"Pin message: `{pin_text}`\n"
-                    f"Response: {trigger.response_message}"
+                    "Response: "
+                    f"{selected_trigger.response_message}"
                 ),
                 inline=False,
             )

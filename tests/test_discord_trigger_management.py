@@ -175,6 +175,7 @@ class DiscordTriggerManagementTests(
         embed = build_trigger_list_embed(
             status,
             [trigger],
+            selected_trigger_id=1,
         )
 
         rendered = " ".join(
@@ -185,6 +186,33 @@ class DiscordTriggerManagementTests(
         self.assertIn("solo", rendered)
         self.assertIn("Solo is active.", rendered)
         self.assertIn("25", rendered)
+
+    def test_embed_fits_discord_limit_with_25_triggers(
+        self,
+    ) -> None:
+        status = SimpleNamespace(
+            twitch_login="example_streamer"
+        )
+        triggers = [
+            Trigger(
+                trigger_id=index,
+                broadcaster_twitch_user_id="456",
+                name=f"Trigger {index} " + "n" * 35,
+                expression="expression " + "x" * 180,
+                response_message="r" * 450,
+                priority=index,
+            )
+            for index in range(1, 26)
+        ]
+
+        embed = build_trigger_list_embed(
+            status,
+            triggers,
+            selected_trigger_id=25,
+        )
+
+        self.assertLessEqual(len(embed), 6000)
+        self.assertLessEqual(len(embed.fields), 25)
 
     def test_embed_marks_selected_trigger(
         self,
@@ -207,9 +235,19 @@ class DiscordTriggerManagementTests(
             selected_trigger_id=1,
         )
 
+        selected_fields = [
+            field
+            for field in embed.fields
+            if "Selected trigger" in field.name
+        ]
+
+        self.assertEqual(
+            len(selected_fields),
+            1,
+        )
         self.assertIn(
-            "Selected",
-            embed.fields[0].name,
+            "Solo Mode",
+            selected_fields[0].name,
         )
 
     def test_view_disables_trigger_actions_without_selection(
