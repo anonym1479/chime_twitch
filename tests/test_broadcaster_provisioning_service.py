@@ -31,6 +31,8 @@ class FakePanelGateway:
     def __init__(self) -> None:
         self.calls = 0
         self.failures_remaining = 0
+        self.activation_calls = []
+        self.activation_failures_remaining = 0
 
     async def ensure_panel(
         self,
@@ -52,6 +54,18 @@ class FakePanelGateway:
             discord_channel_id="2000",
             opening_message_id="3000",
         )
+
+    async def activate_panel(
+        self,
+        twitch_user_id: str,
+    ) -> bool:
+        self.activation_calls.append(twitch_user_id)
+
+        if self.activation_failures_remaining > 0:
+            self.activation_failures_remaining -= 1
+            raise RuntimeError("Test panel refresh failure.")
+
+        return True
 
 
 class BroadcasterProvisioningServiceTests(
@@ -201,6 +215,10 @@ class BroadcasterProvisioningServiceTests(
         )
         self.assertFalse(result.already_active)
         self.assertEqual(self.gateway.calls, 1)
+        self.assertEqual(
+            self.gateway.activation_calls,
+            ["456"],
+        )
 
     async def test_active_request_is_idempotent(
         self,
@@ -285,6 +303,31 @@ class BroadcasterProvisioningServiceTests(
             )
 
         self.assertEqual(self.gateway.calls, 0)
+
+    async def test_panel_refresh_failure_keeps_request_active(
+        self,
+    ) -> None:
+        await self.approve_request()
+        self.gateway.activation_failures_remaining = 1
+
+        result = await self.service.provision(
+            self.request.request_id,
+            actor_discord_user_id="999",
+        )
+        request = await self.request_repository.get(
+            self.request.request_id
+        )
+        broadcaster = (
+            await self.identity_repository
+            .get_broadcaster("456")
+        )
+
+        self.assertFalse(result.already_active)
+        self.assertEqual(
+            request.status,
+            BroadcasterRequestStatus.ACTIVE,
+        )
+        self.assertTrue(broadcaster.enabled)
 
 
 if __name__ == "__main__":

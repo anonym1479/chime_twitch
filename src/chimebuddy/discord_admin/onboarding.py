@@ -226,19 +226,11 @@ class RequestMessageModal(
         try:
             await (
                 self.confirmation_interaction
-                .edit_original_response(
-                    content=(
-                        "**Request submitted successfully.**\n\n"
-                        "You can see the final information "
-                        "in the confirmation message below."
-                    ),
-                    embed=None,
-                    view=None,
-                )
+                .delete_original_response()
             )
         except discord.HTTPException:
             logger.warning(
-                "Could not update the account "
+                "Could not remove the redundant account "
                 "confirmation message after submission."
             )
 

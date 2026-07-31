@@ -137,6 +137,7 @@ class DiscordBroadcasterPanelGateway:
         *,
         settings_repository: AppSettingsRepository,
         discord_guild_id: int,
+        management_controller=None,
     ) -> None:
         self.settings_repository = (
             settings_repository
@@ -145,12 +146,30 @@ class DiscordBroadcasterPanelGateway:
             discord_guild_id
         )
         self.client: discord.Client | None = None
+        self.management_controller = management_controller
 
     def bind_client(
         self,
         client: discord.Client,
     ) -> None:
         self.client = client
+
+    async def activate_panel(
+        self,
+        twitch_user_id: str,
+    ) -> bool:
+        """Attach current management controls to a new panel."""
+
+        if self.management_controller is None:
+            return False
+
+        return await (
+            self.management_controller
+            .refresh_stored_panel(
+                self._require_client(),
+                twitch_user_id,
+            )
+        )
 
     async def ensure_panel(
         self,

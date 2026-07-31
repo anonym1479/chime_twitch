@@ -93,6 +93,12 @@ class BroadcasterPanelGateway(Protocol):
         channel and opening panel.
         """
 
+    async def activate_panel(
+        self,
+        twitch_user_id: str,
+    ) -> bool:
+        """Attach live controls after database activation."""
+
 
 class BroadcasterProvisioningService:
     """
@@ -330,6 +336,29 @@ class BroadcasterProvisioningService:
                 request_id,
                 actor_discord_user_id=actor_id,
             )
+
+            try:
+                panel_activated = (
+                    await self.panel_gateway.activate_panel(
+                        request.twitch_user_id
+                    )
+                )
+
+                if not panel_activated:
+                    logger.warning(
+                        "Broadcaster %s became active, but "
+                        "its Discord controls were not "
+                        "attached immediately.",
+                        request.twitch_user_id,
+                    )
+            except Exception:
+                # Core provisioning is already complete. A bot
+                # restart can safely restore this panel later.
+                logger.exception(
+                    "Broadcaster %s became active, but its "
+                    "Discord panel could not be refreshed.",
+                    request.twitch_user_id,
+                )
 
         except Exception as exc:
             await self._record_failure(

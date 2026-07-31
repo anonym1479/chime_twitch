@@ -245,6 +245,9 @@ async def run(settings: Settings) -> None:
             discord_guild_id=(
                 settings.discord_guild_id
             ),
+            management_controller=(
+                broadcaster_panel_controller
+            ),
         )
     )
 
