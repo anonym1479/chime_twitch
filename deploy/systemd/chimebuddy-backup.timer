@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the ChimeBuddy database backup daily
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=chimebuddy-backup.service
+
+[Install]
+WantedBy=timers.target
