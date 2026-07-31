@@ -4,6 +4,8 @@ from dataclasses import replace
 from chimebuddy.models import (
     AccountLinkStatus,
     BroadcasterProfile,
+    BroadcasterRequest,
+    BroadcasterRequestStatus,
 )
 from chimebuddy.services import (
     BroadcasterLifecycleService,
@@ -91,6 +93,28 @@ class FakeCredentialRepository:
         return object()
 
 
+class FakeRequestRepository:
+    def __init__(
+        self,
+        status: BroadcasterRequestStatus | None = None,
+    ) -> None:
+        self.status = status
+
+    async def get_open_for_twitch(
+        self,
+        twitch_user_id: str,
+    ) -> BroadcasterRequest | None:
+        if self.status is None:
+            return None
+
+        return BroadcasterRequest(
+            request_id=1,
+            twitch_user_id=twitch_user_id,
+            discord_user_id="123",
+            status=self.status,
+        )
+
+
 class BroadcasterLifecycleServiceTests(
     unittest.IsolatedAsyncioTestCase
 ):
@@ -99,6 +123,9 @@ class BroadcasterLifecycleServiceTests(
         *,
         enabled: bool = True,
         credential_exists: bool = True,
+        request_status: (
+            BroadcasterRequestStatus | None
+        ) = None,
     ):
         identity_repository = (
             FakeIdentityRepository(
@@ -116,6 +143,9 @@ class BroadcasterLifecycleServiceTests(
                         credential_exists
                     )
                 )
+            ),
+            request_repository=(
+                FakeRequestRepository(request_status)
             ),
         )
 
@@ -178,6 +208,23 @@ class BroadcasterLifecycleServiceTests(
             [],
         )
 
+    async def test_broadcaster_cannot_resume_suspension(
+        self,
+    ) -> None:
+        service, repository = self.create_service(
+            enabled=False,
+            request_status=(
+                BroadcasterRequestStatus.SUSPENDED
+            ),
+        )
+
+        with self.assertRaises(
+            BroadcasterResumeBlockedError
+        ):
+            await service.resume("456")
+
+        self.assertEqual(repository.set_calls, [])
+
     async def test_unknown_broadcaster_is_rejected(
         self,
     ) -> None:
@@ -188,6 +235,7 @@ class BroadcasterLifecycleServiceTests(
             credential_repository=(
                 FakeCredentialRepository()
             ),
+            request_repository=FakeRequestRepository(),
         )
 
         with self.assertRaises(

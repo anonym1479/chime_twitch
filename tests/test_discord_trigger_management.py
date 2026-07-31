@@ -388,6 +388,27 @@ class DiscordTriggerManagementTests(
         self.assertFalse(reconnect_button.disabled)
         self.assertTrue(view.lifecycle_button.disabled)
 
+    def test_suspension_disables_lifecycle_button(
+        self,
+    ) -> None:
+        status = SimpleNamespace(
+            twitch_user_id="456",
+            broadcaster_enabled=False,
+            request_status=(
+                BroadcasterRequestStatus.SUSPENDED
+            ),
+        )
+
+        view = BroadcasterManagementView(
+            SimpleNamespace(),
+            status,
+        )
+
+        self.assertTrue(view.lifecycle_button.disabled)
+        self.assertEqual(
+            view.lifecycle_button.label,
+            "Suspended by developer",
+        )
 
 class DiscordTriggerManagementControllerTests(
     unittest.IsolatedAsyncioTestCase

@@ -51,8 +51,19 @@ def build_broadcaster_management_embed(
         is BroadcasterRequestStatus
         .REAUTHORIZATION_REQUIRED
     )
+    suspended = (
+        status.request_status
+        is BroadcasterRequestStatus.SUSPENDED
+    )
 
-    if reauthorization_required:
+    if suspended:
+        state_text = "🔴 Suspended by developer"
+        state_description = (
+            "ChimeBuddy access is suspended. Only the "
+            "ChimeBuddy developer can restore it."
+        )
+        color = discord.Color.red()
+    elif reauthorization_required:
         state_text = "🔴 Twitch reconnection required"
         state_description = (
             "Twitch authorization is no longer valid. "
@@ -253,8 +264,21 @@ class BroadcasterManagementView(discord.ui.View):
             is BroadcasterRequestStatus
             .REAUTHORIZATION_REQUIRED
         )
+        self.suspended = (
+            status.request_status
+            is BroadcasterRequestStatus.SUSPENDED
+        )
 
-        if self.reauthorization_required:
+        if self.suspended:
+            self.lifecycle_button.label = (
+                "Suspended by developer"
+            )
+            self.lifecycle_button.style = (
+                discord.ButtonStyle.secondary
+            )
+            self.lifecycle_button.emoji = "🔒"
+            self.lifecycle_button.disabled = True
+        elif self.reauthorization_required:
             self.lifecycle_button.label = (
                 "Twitch reconnection required"
             )
@@ -350,7 +374,6 @@ class BroadcasterManagementView(discord.ui.View):
             interaction,
             self.twitch_user_id,
         )
-
 
 class LifecycleConfirmationView(discord.ui.View):
     """Short-lived confirmation for pause or resume."""
@@ -553,6 +576,45 @@ class DiscordBroadcasterPanelController:
 
         return restored
 
+    async def refresh_stored_panel(
+        self,
+        client: discord.Client,
+        twitch_user_id: str,
+    ) -> bool:
+        """Refresh a broadcaster panel after an external action."""
+
+        panel = await self.panel_repository.get_for_broadcaster(
+            str(twitch_user_id).strip()
+        )
+
+        if panel is None or panel.opening_message_id is None:
+            return False
+
+        channel = client.get_channel(
+            int(panel.discord_channel_id)
+        )
+
+        if channel is None:
+            channel = await client.fetch_channel(
+                int(panel.discord_channel_id)
+            )
+
+        if not hasattr(channel, "fetch_message"):
+            return False
+
+        message = await channel.fetch_message(
+            int(panel.opening_message_id)
+        )
+        status = await self.status_service.get_for_broadcaster(
+            twitch_user_id
+        )
+        await message.edit(
+            embed=build_broadcaster_management_embed(status),
+            view=self.create_view(status),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        return True
+
     async def handle_refresh(
         self,
         interaction: discord.Interaction,
@@ -606,6 +668,18 @@ class DiscordBroadcasterPanelController:
         )
 
         if status is None:
+            return
+
+        if (
+            status.request_status
+            is BroadcasterRequestStatus.SUSPENDED
+        ):
+            await interaction.response.send_message(
+                "This broadcaster is suspended by the "
+                "ChimeBuddy developer. Only the developer "
+                "can restore it.",
+                ephemeral=True,
+            )
             return
 
         if (

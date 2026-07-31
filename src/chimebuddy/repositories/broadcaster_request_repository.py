@@ -185,6 +185,44 @@ class BroadcasterRequestRepository:
 
         return self._request_from_row(row)
 
+    async def get_open_for_twitch(
+        self,
+        twitch_user_id: str,
+    ) -> BroadcasterRequest | None:
+        twitch_id = self._required_text(
+            twitch_user_id,
+            "twitch_user_id",
+        )
+
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT *
+                FROM broadcaster_requests
+                WHERE twitch_user_id = ?
+                  AND status IN (
+                      'pending',
+                      'approving',
+                      'provisioning',
+                      'active',
+                      'provisioning_failed',
+                      'suspended',
+                      'reauthorization_required'
+                  )
+                ORDER BY request_id DESC
+                LIMIT 1
+                """,
+                (twitch_id,),
+            )
+
+            row = await cursor.fetchone()
+            await cursor.close()
+
+        if row is None:
+            return None
+
+        return self._request_from_row(row)
+
     async def get_latest_for_discord(
         self,
         discord_user_id: str,
@@ -781,6 +819,218 @@ class BroadcasterRequestRepository:
                         sort_keys=True,
                         separators=(",", ":"),
                     ),
+                )
+
+                await connection.commit()
+                return True
+
+            except Exception:
+                await connection.rollback()
+                raise
+
+    async def suspend_broadcaster(
+        self,
+        request_id: int,
+        *,
+        actor_discord_user_id: str,
+        internal_reason: str,
+    ) -> bool:
+        """Disable an active broadcaster and audit the suspension."""
+
+        actor_id = self._required_text(
+            actor_discord_user_id,
+            "actor_discord_user_id",
+        )
+        reason = self._required_text(
+            internal_reason,
+            "internal_reason",
+        )
+
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                row = await self._fetch_request_row(
+                    connection,
+                    int(request_id),
+                )
+
+                if row is None:
+                    await connection.rollback()
+                    return False
+
+                current_status = BroadcasterRequestStatus(
+                    row["status"]
+                )
+
+                if current_status not in {
+                    BroadcasterRequestStatus.ACTIVE,
+                    BroadcasterRequestStatus.SUSPENDED,
+                }:
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcasters
+                    SET
+                        enabled = 0,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE twitch_user_id = ?
+                    """,
+                    (row["twitch_user_id"],),
+                )
+                broadcaster_found = cursor.rowcount == 1
+                await cursor.close()
+
+                if not broadcaster_found:
+                    await connection.rollback()
+                    return False
+
+                if (
+                    current_status
+                    is BroadcasterRequestStatus.SUSPENDED
+                ):
+                    await connection.commit()
+                    return True
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcaster_requests
+                    SET
+                        status = 'suspended',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE request_id = ?
+                      AND status = 'active'
+                    """,
+                    (int(request_id),),
+                )
+                changed = cursor.rowcount == 1
+                await cursor.close()
+
+                if not changed:
+                    await connection.rollback()
+                    return False
+
+                await self._insert_event(
+                    connection,
+                    request_id=int(request_id),
+                    event_type="broadcaster_suspended",
+                    from_status=(
+                        BroadcasterRequestStatus.ACTIVE
+                    ),
+                    to_status=(
+                        BroadcasterRequestStatus.SUSPENDED
+                    ),
+                    actor_discord_user_id=actor_id,
+                    details_json=json.dumps(
+                        {"internal_reason": reason},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+
+                await connection.commit()
+                return True
+
+            except Exception:
+                await connection.rollback()
+                raise
+
+    async def restore_suspended_broadcaster(
+        self,
+        request_id: int,
+        *,
+        actor_discord_user_id: str,
+    ) -> bool:
+        """Restore a suspended broadcaster with valid OAuth access."""
+
+        actor_id = self._required_text(
+            actor_discord_user_id,
+            "actor_discord_user_id",
+        )
+
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                row = await self._fetch_request_row(
+                    connection,
+                    int(request_id),
+                )
+
+                if (
+                    row is None
+                    or row["status"]
+                    != BroadcasterRequestStatus.SUSPENDED.value
+                ):
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    SELECT 1
+                    FROM oauth_credentials
+                    WHERE twitch_user_id = ?
+                      AND credential_kind = 'broadcaster'
+                    LIMIT 1
+                    """,
+                    (row["twitch_user_id"],),
+                )
+                credential_exists = (
+                    await cursor.fetchone()
+                ) is not None
+                await cursor.close()
+
+                if not credential_exists:
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcasters
+                    SET
+                        enabled = 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE twitch_user_id = ?
+                    """,
+                    (row["twitch_user_id"],),
+                )
+                broadcaster_found = cursor.rowcount == 1
+                await cursor.close()
+
+                if not broadcaster_found:
+                    await connection.rollback()
+                    return False
+
+                cursor = await connection.execute(
+                    """
+                    UPDATE broadcaster_requests
+                    SET
+                        status = 'active',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE request_id = ?
+                      AND status = 'suspended'
+                    """,
+                    (int(request_id),),
+                )
+                changed = cursor.rowcount == 1
+                await cursor.close()
+
+                if not changed:
+                    await connection.rollback()
+                    return False
+
+                await self._insert_event(
+                    connection,
+                    request_id=int(request_id),
+                    event_type="broadcaster_restored",
+                    from_status=(
+                        BroadcasterRequestStatus.SUSPENDED
+                    ),
+                    to_status=BroadcasterRequestStatus.ACTIVE,
+                    actor_discord_user_id=actor_id,
+                    details_json="{}",
                 )
 
                 await connection.commit()

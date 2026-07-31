@@ -18,6 +18,9 @@ from chimebuddy.discord_admin.request_status import (
 from chimebuddy.discord_admin.broadcaster_panel import (
     DiscordBroadcasterPanelController,
 )
+from chimebuddy.discord_admin.suspension import (
+    DiscordBroadcasterSuspensionController,
+)
 
 
 logger = logging.getLogger(
@@ -56,6 +59,9 @@ class ChimeBuddyDiscordClient(discord.Client):
         request_status_controller: (
             DiscordRequestStatusController | None
         ) = None,
+        suspension_controller: (
+            DiscordBroadcasterSuspensionController | None
+        ) = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -83,6 +89,7 @@ class ChimeBuddyDiscordClient(discord.Client):
         self.request_status_controller = (
             request_status_controller
         )
+        self.suspension_controller = suspension_controller
 
         self.command_tree = app_commands.CommandTree(
             self,
@@ -170,6 +177,13 @@ class ChimeBuddyDiscordClient(discord.Client):
                     ),
                     callback=setup_review_command,
                 ),
+                guild=self.guild_object,
+            )
+
+        if self.suspension_controller is not None:
+            self.command_tree.add_command(
+                self.suspension_controller
+                .create_command_group(),
                 guild=self.guild_object,
             )
 

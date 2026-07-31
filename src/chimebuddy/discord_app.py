@@ -34,6 +34,7 @@ from chimebuddy.repositories import (
 from chimebuddy.services import (
     AccountLinkingService,
     BroadcasterLifecycleService,
+    BroadcasterSuspensionService,
     BroadcasterPanelStatusService,
     BroadcasterProvisioningService,
     OnboardingService,
@@ -60,6 +61,9 @@ from chimebuddy.discord_admin.broadcaster_panel import (
 )
 from chimebuddy.discord_admin.trigger_management import (
     DiscordTriggerManagementController,
+)
+from chimebuddy.discord_admin.suspension import (
+    DiscordBroadcasterSuspensionController,
 )
 
 
@@ -161,6 +165,16 @@ async def run(settings: Settings) -> None:
             identity_repository=(
                 identity_repository
             ),
+            credential_repository=(
+                credential_repository
+            ),
+            request_repository=request_repository,
+        )
+    )
+
+    broadcaster_suspension_service = (
+        BroadcasterSuspensionService(
+            request_repository=request_repository,
             credential_repository=(
                 credential_repository
             ),
@@ -269,6 +283,22 @@ async def run(settings: Settings) -> None:
         )
     )
 
+    suspension_controller = (
+        DiscordBroadcasterSuspensionController(
+            suspension_service=(
+                broadcaster_suspension_service
+            ),
+            request_repository=request_repository,
+            identity_repository=identity_repository,
+            panel_controller=(
+                broadcaster_panel_controller
+            ),
+            developer_discord_user_id=(
+                settings.developer_discord_user_id
+            ),
+        )
+    )
+
     request_status_controller = (
         DiscordRequestStatusController(
             request_repository=request_repository,
@@ -345,6 +375,9 @@ async def run(settings: Settings) -> None:
             ),
             request_status_controller=(
                 request_status_controller
+            ),
+            suspension_controller=(
+                suspension_controller
             ),
         )
 

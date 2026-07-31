@@ -1,8 +1,10 @@
 from chimebuddy.models import (
     BroadcasterProfile,
+    BroadcasterRequestStatus,
     OAuthCredentialKind,
 )
 from chimebuddy.repositories import (
+    BroadcasterRequestRepository,
     IdentityRepository,
     OAuthCredentialRepository,
 )
@@ -32,11 +34,13 @@ class BroadcasterLifecycleService:
         *,
         identity_repository: IdentityRepository,
         credential_repository: OAuthCredentialRepository,
+        request_repository: BroadcasterRequestRepository,
     ) -> None:
         self.identity_repository = identity_repository
         self.credential_repository = (
             credential_repository
         )
+        self.request_repository = request_repository
 
     async def pause(
         self,
@@ -54,6 +58,22 @@ class BroadcasterLifecycleService:
         twitch_id = self._required_id(
             twitch_user_id
         )
+
+        request = (
+            await self.request_repository
+            .get_open_for_twitch(twitch_id)
+        )
+
+        if (
+            request is not None
+            and request.status
+            is BroadcasterRequestStatus.SUSPENDED
+        ):
+            raise BroadcasterResumeBlockedError(
+                "This broadcaster was suspended by the "
+                "ChimeBuddy developer and can only be "
+                "restored by the developer."
+            )
 
         credential = (
             await self.credential_repository.get(
