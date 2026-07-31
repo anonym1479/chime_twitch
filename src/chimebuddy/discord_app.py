@@ -65,6 +65,9 @@ from chimebuddy.discord_admin.trigger_management import (
 from chimebuddy.discord_admin.suspension import (
     DiscordBroadcasterSuspensionController,
 )
+from chimebuddy.discord_admin.help import (
+    DiscordHelpController,
+)
 
 
 logger = logging.getLogger("chimebuddy.discord")
@@ -143,6 +146,8 @@ async def run(settings: Settings) -> None:
         identity_repository
     )
 
+    help_controller = DiscordHelpController()
+
     broadcaster_panel_status_service = (
         BroadcasterPanelStatusService(
             panel_repository=panel_repository,
@@ -217,6 +222,7 @@ async def run(settings: Settings) -> None:
             trigger_management_controller=(
                 trigger_management_controller
             ),
+            help_controller=help_controller,
         )
     )
 
@@ -379,6 +385,7 @@ async def run(settings: Settings) -> None:
             suspension_controller=(
                 suspension_controller
             ),
+            help_controller=help_controller,
         )
 
         panel_gateway.bind_client(client)

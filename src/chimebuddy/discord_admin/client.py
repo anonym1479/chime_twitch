@@ -21,6 +21,9 @@ from chimebuddy.discord_admin.broadcaster_panel import (
 from chimebuddy.discord_admin.suspension import (
     DiscordBroadcasterSuspensionController,
 )
+from chimebuddy.discord_admin.help import (
+    DiscordHelpController,
+)
 
 
 logger = logging.getLogger(
@@ -62,6 +65,9 @@ class ChimeBuddyDiscordClient(discord.Client):
         suspension_controller: (
             DiscordBroadcasterSuspensionController | None
         ) = None,
+        help_controller: (
+            DiscordHelpController | None
+        ) = None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -90,6 +96,7 @@ class ChimeBuddyDiscordClient(discord.Client):
             request_status_controller
         )
         self.suspension_controller = suspension_controller
+        self.help_controller = help_controller
 
         self.command_tree = app_commands.CommandTree(
             self,
@@ -116,6 +123,26 @@ class ChimeBuddyDiscordClient(discord.Client):
             ),
             guild=self.guild_object,
         )
+
+        if self.help_controller is not None:
+            async def help_command(
+                interaction: discord.Interaction,
+            ) -> None:
+                await self.help_controller.show_help(
+                    interaction
+                )
+
+            self.command_tree.add_command(
+                app_commands.Command(
+                    name="help",
+                    description=(
+                        "Privately show the bilingual "
+                        "ChimeBuddy guide."
+                    ),
+                    callback=help_command,
+                ),
+                guild=self.guild_object,
+            )
 
         if self.request_status_controller is not None:
             async def request_status_command(

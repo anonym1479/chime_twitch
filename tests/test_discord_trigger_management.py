@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from chimebuddy.discord_admin.broadcaster_panel import (
+    HELP_BUTTON_CUSTOM_ID,
     RECONNECT_TWITCH_BUTTON_CUSTOM_ID,
     TITLE_TRIGGERS_BUTTON_CUSTOM_ID,
     BroadcasterManagementView,
@@ -358,6 +359,10 @@ class DiscordTriggerManagementTests(
 
         self.assertIn(
             TITLE_TRIGGERS_BUTTON_CUSTOM_ID,
+            custom_ids,
+        )
+        self.assertIn(
+            HELP_BUTTON_CUSTOM_ID,
             custom_ids,
         )
 

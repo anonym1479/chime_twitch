@@ -28,6 +28,9 @@ TITLE_TRIGGERS_BUTTON_CUSTOM_ID = (
 RECONNECT_TWITCH_BUTTON_CUSTOM_ID = (
     "chimebuddy:broadcaster:reconnect_twitch"
 )
+HELP_BUTTON_CUSTOM_ID = (
+    "chimebuddy:broadcaster:help"
+)
 
 
 def can_manage_broadcaster_panel(
@@ -195,6 +198,8 @@ def build_broadcaster_management_embed(
             "🔄 **Refresh status** — reload this panel.\n\n"
             "📝 **Title triggers** — privately list and "
             "manage stream-title triggers.\n\n"
+            "❓ **Help** — open the bilingual ChimeBuddy "
+            "guide.\n\n"
             + (
                 "🔗 **Reconnect Twitch** — renew the "
                 "authorization and restore this channel."
@@ -375,6 +380,22 @@ class BroadcasterManagementView(discord.ui.View):
             self.twitch_user_id,
         )
 
+    @discord.ui.button(
+        label="Help",
+        style=discord.ButtonStyle.secondary,
+        emoji="❓",
+        custom_id=HELP_BUTTON_CUSTOM_ID,
+    )
+    async def help_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.handle_help(
+            interaction,
+            self.twitch_user_id,
+        )
+
 class LifecycleConfirmationView(discord.ui.View):
     """Short-lived confirmation for pause or resume."""
 
@@ -458,6 +479,7 @@ class DiscordBroadcasterPanelController:
         developer_discord_user_id: int,
         trigger_management_controller=None,
         onboarding_controller=None,
+        help_controller=None,
     ) -> None:
         self.status_service = status_service
         self.lifecycle_service = lifecycle_service
@@ -466,6 +488,7 @@ class DiscordBroadcasterPanelController:
             trigger_management_controller
         )
         self.onboarding_controller = onboarding_controller
+        self.help_controller = help_controller
         self.developer_discord_user_id = int(
             developer_discord_user_id
         )
@@ -875,6 +898,28 @@ class DiscordBroadcasterPanelController:
                 twitch_user_id,
             )
         )
+
+    async def handle_help(
+        self,
+        interaction: discord.Interaction,
+        twitch_user_id: str,
+    ) -> None:
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
+
+        if status is None:
+            return
+
+        if self.help_controller is None:
+            await interaction.response.send_message(
+                "ChimeBuddy help is not configured.",
+                ephemeral=True,
+            )
+            return
+
+        await self.help_controller.show_help(interaction)
 
     async def handle_reconnect_twitch(
         self,
