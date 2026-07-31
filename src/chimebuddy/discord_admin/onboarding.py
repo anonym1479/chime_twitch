@@ -202,6 +202,13 @@ class RequestMessageModal(
         self,
         interaction: discord.Interaction,
     ) -> None:
+        if not self.confirmation_view.claim():
+            await interaction.response.send_message(
+                "This request is already being submitted.",
+                ephemeral=True,
+            )
+            return
+
         message = self.requester_message.value.strip()
 
         succeeded = await self.controller.finalize_request(
@@ -265,6 +272,15 @@ class AccountConfirmationView(discord.ui.View):
         if authorization.existing_request is not None:
             self.continue_button.label = "Reconnect Twitch"
 
+    def claim(self) -> bool:
+        """Claim the confirmation for one final operation."""
+
+        if self._claimed:
+            return False
+
+        self._claimed = True
+        return True
+
     def release(self) -> None:
         """Allow another submission after a recoverable error."""
 
@@ -306,9 +322,9 @@ class AccountConfirmationView(discord.ui.View):
             )
             return
 
-        self._claimed = True
-
         if self.authorization.existing_request is not None:
+            self.claim()
+
             succeeded = await self.controller.finalize_request(
                 interaction,
                 self.authorization,
@@ -349,7 +365,7 @@ class AccountConfirmationView(discord.ui.View):
             )
             return
 
-        self._claimed = True
+        self.claim()
 
         try:
             await (
