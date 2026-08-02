@@ -110,6 +110,27 @@ class StreamTitleMonitor:
                         broadcaster_id
                     )
                 )
+            except TimeoutError:
+                logger.warning(
+                    "Stream information request timed out: "
+                    "broadcaster=%s. The next scheduled "
+                    "check will retry.",
+                    broadcaster_id,
+                )
+
+                check = BroadcasterTitleCheck(
+                    broadcaster_twitch_user_id=(
+                        broadcaster_id
+                    ),
+                    is_live=False,
+                    title="",
+                    trigger_report=None,
+                    error="Stream information timed out.",
+                )
+                checks.append(check)
+                await self._notify_observer(check)
+                continue
+
             except Exception as exc:
                 logger.exception(
                     "Failed to read stream information "
@@ -171,6 +192,12 @@ class StreamTitleMonitor:
                 await self._notify_observer(check)
                 continue
 
+            trigger_error = (
+                "; ".join(trigger_report.errors)
+                if trigger_report.has_errors
+                else None
+            )
+
             check = BroadcasterTitleCheck(
                 broadcaster_twitch_user_id=(
                     broadcaster_id
@@ -178,7 +205,12 @@ class StreamTitleMonitor:
                 is_live=is_live,
                 title=title,
                 trigger_report=trigger_report,
-                error=None,
+                error=(
+                    "Trigger processing reported errors: "
+                    f"{trigger_error}"
+                    if trigger_error is not None
+                    else None
+                ),
             )
             checks.append(check)
             await self._notify_observer(check)

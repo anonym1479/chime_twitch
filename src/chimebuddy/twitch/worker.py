@@ -274,14 +274,27 @@ def create_title_monitor(
                 details={"is_live": check.is_live},
             )
         else:
+            trigger_failed = bool(
+                check.trigger_report
+                and check.trigger_report.has_errors
+            )
             await _record_health_failure(
                 health_repository,
                 "title_monitor",
                 check.broadcaster_twitch_user_id,
-                error_code="title_check_failed",
+                error_code=(
+                    "title_trigger_failed"
+                    if trigger_failed
+                    else "title_check_failed"
+                ),
                 safe_message=(
-                    "The latest stream-title check "
+                    "A stream-title trigger operation "
                     "could not be completed."
+                    if trigger_failed
+                    else (
+                        "The latest stream-title check "
+                        "could not be completed."
+                    )
                 ),
             )
 

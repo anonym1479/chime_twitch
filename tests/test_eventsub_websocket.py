@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import aiohttp
 
 from chimebuddy.twitch.eventsub_websocket import (
+    EventSubWebSocketError,
     EventSubWebSocketService,
 )
 
@@ -259,6 +260,63 @@ class EventSubWebSocketTests(
                 item[1] == ("211164044",)
                 for item in statuses
             )
+        )
+
+    async def test_classifies_expected_interruptions(
+        self,
+    ) -> None:
+        service, _, _ = create_service()
+
+        self.assertEqual(
+            service._connection_failure_reason(
+                EventSubWebSocketError(
+                    "Twitch EventSub keepalive timed out."
+                )
+            ),
+            "keepalive_timeout",
+        )
+        self.assertEqual(
+            service._connection_failure_reason(
+                aiohttp.ClientConnectionResetError(
+                    "Transport closed."
+                )
+            ),
+            "transport_closed",
+        )
+        self.assertEqual(
+            service._connection_failure_reason(
+                TimeoutError()
+            ),
+            "connection_timeout",
+        )
+
+    async def test_logs_connection_recovery(self) -> None:
+        service, _, _ = create_service()
+        service._record_interruption(
+            "keepalive_timeout"
+        )
+
+        with self.assertLogs(
+            "chimebuddy.twitch.eventsub",
+            level="INFO",
+        ) as captured:
+            service._log_recovery(2)
+
+        rendered_logs = " ".join(captured.output)
+        self.assertIn(
+            "connection recovered",
+            rendered_logs,
+        )
+        self.assertIn(
+            "broadcasters=2",
+            rendered_logs,
+        )
+        self.assertIn(
+            "previous_reason=keepalive_timeout",
+            rendered_logs,
+        )
+        self.assertIsNone(
+            service._interruption_started_at
         )
     async def test_duplicate_event_is_ignored(
         self,

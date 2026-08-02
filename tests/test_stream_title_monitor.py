@@ -50,8 +50,9 @@ class FakeStreamGateway:
 
 
 class FakeTriggerCoordinator:
-    def __init__(self):
+    def __init__(self, errors=()):
         self.calls = []
+        self.errors = tuple(errors)
 
     async def process_title(
         self,
@@ -74,7 +75,7 @@ class FakeTriggerCoordinator:
             activated_trigger_ids=(),
             deactivated_trigger_ids=(),
             reset_trigger_ids=(),
-            errors=(),
+            errors=self.errors,
         )
 
 
@@ -239,6 +240,61 @@ class StreamTitleMonitorTests(
             observed,
             [report.checks[0]],
         )
+
+    async def test_timeout_is_a_concise_retryable_warning(
+        self,
+    ) -> None:
+        monitor = StreamTitleMonitor(
+            FakeIdentityRepository(["100"]),
+            FakeStreamGateway(
+                {"100": TimeoutError()}
+            ),
+            FakeTriggerCoordinator(),
+        )
+
+        with self.assertLogs(
+            "chimebuddy.twitch.title_monitor",
+            level="WARNING",
+        ) as captured:
+            report = await monitor.check_once()
+
+        self.assertEqual(report.error_count, 1)
+        self.assertEqual(
+            report.checks[0].error,
+            "Stream information timed out.",
+        )
+        rendered_logs = " ".join(captured.output)
+        self.assertIn(
+            "next scheduled check will retry",
+            rendered_logs,
+        )
+        self.assertNotIn("Traceback", rendered_logs)
+
+    async def test_trigger_report_errors_fail_health_check(
+        self,
+    ) -> None:
+        observed = []
+
+        async def observe(check):
+            observed.append(check)
+
+        monitor = StreamTitleMonitor(
+            FakeIdentityRepository(["100"]),
+            FakeStreamGateway({"100": None}),
+            FakeTriggerCoordinator(
+                errors=(
+                    "Trigger 3 sent its message, but "
+                    "pinning failed.",
+                )
+            ),
+            check_observer=observe,
+        )
+
+        report = await monitor.check_once()
+
+        self.assertEqual(report.error_count, 1)
+        self.assertIsNotNone(report.checks[0].error)
+        self.assertEqual(observed, [report.checks[0]])
 
 
 if __name__ == "__main__":

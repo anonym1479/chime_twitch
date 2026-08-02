@@ -166,10 +166,16 @@ class TriggerCoordinatorTests(
     ) -> None:
         trigger = await self.create_trigger()
 
-        first_report = await self.coordinator.process_title(
-            "211164044",
-            "Ranked solo gameplay",
-        )
+        with self.assertLogs(
+            "chimebuddy.twitch.triggers",
+            level="INFO",
+        ) as captured:
+            first_report = (
+                await self.coordinator.process_title(
+                    "211164044",
+                    "Ranked solo gameplay",
+                )
+            )
 
         second_report = await self.coordinator.process_title(
             "211164044",
@@ -192,6 +198,23 @@ class TriggerCoordinatorTests(
             len(self.pin_gateway.pinned),
             1,
         )
+        rendered_logs = " ".join(captured.output)
+        self.assertIn(
+            "Title trigger matched",
+            rendered_logs,
+        )
+        self.assertIn(
+            "Trigger activated",
+            rendered_logs,
+        )
+        self.assertIn(
+            "pinned=True",
+            rendered_logs,
+        )
+        self.assertNotIn(
+            "Solo mode is active.",
+            rendered_logs,
+        )
 
     async def test_nonmatching_title_unpins_message(
         self,
@@ -203,10 +226,14 @@ class TriggerCoordinatorTests(
             "Ranked solo gameplay",
         )
 
-        report = await self.coordinator.process_title(
-            "211164044",
-            "Playing with viewers",
-        )
+        with self.assertLogs(
+            "chimebuddy.twitch.triggers",
+            level="INFO",
+        ) as captured:
+            report = await self.coordinator.process_title(
+                "211164044",
+                "Playing with viewers",
+            )
 
         state = (
             await self.trigger_repository.get_runtime_state(
@@ -230,6 +257,10 @@ class TriggerCoordinatorTests(
         self.assertEqual(
             state.status,
             TriggerRuntimeStatus.INACTIVE,
+        )
+        self.assertIn(
+            "reason=title_no_longer_matches",
+            " ".join(captured.output),
         )
 
     async def test_highest_priority_match_is_selected(
@@ -274,10 +305,16 @@ class TriggerCoordinatorTests(
         trigger = await self.create_trigger()
         self.pin_gateway.fail_pinning = True
 
-        first_report = await self.coordinator.process_title(
-            "211164044",
-            "Solo gameplay",
-        )
+        with self.assertLogs(
+            "chimebuddy.twitch.triggers",
+            level="WARNING",
+        ) as captured:
+            first_report = (
+                await self.coordinator.process_title(
+                    "211164044",
+                    "Solo gameplay",
+                )
+            )
 
         second_report = await self.coordinator.process_title(
             "211164044",
@@ -308,6 +345,10 @@ class TriggerCoordinatorTests(
             TriggerRuntimeStatus.ACTIVE,
         )
         self.assertFalse(state.is_pinned)
+        self.assertIn(
+            "Trigger pinning failed",
+            " ".join(captured.output),
+        )
 
 
 if __name__ == "__main__":

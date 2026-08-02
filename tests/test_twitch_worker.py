@@ -1,8 +1,25 @@
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
+from chimebuddy.database import Database
+from chimebuddy.models import (
+    AccountLink,
+    AccountLinkStatus,
+    Broadcaster,
+    DiscordAccount,
+    Trigger,
+    TwitchAccount,
+)
+from chimebuddy.repositories import (
+    IdentityRepository,
+    TriggerRepository,
+)
+from chimebuddy.twitch import StreamInformation
 from chimebuddy.twitch.worker import (
+    create_title_monitor,
     eventsub_supervisor_loop,
     token_validation_loop,
     validate_enabled_broadcaster_credentials,
@@ -147,6 +164,45 @@ class FakeHealthRepository:
         )
 
 
+class PinFailingTitleGateway:
+    async def get_stream_information(
+        self,
+        broadcaster_twitch_user_id,
+    ):
+        return StreamInformation(
+            broadcaster_twitch_user_id=(
+                broadcaster_twitch_user_id
+            ),
+            login="example_streamer",
+            display_name="Example Streamer",
+            title="Solo test stream",
+            game_id="1",
+            game_name="Example Game",
+            started_at="2026-08-02T10:00:00Z",
+        )
+
+    async def send_message(
+        self,
+        broadcaster_twitch_user_id,
+        message,
+    ):
+        return "message-1"
+
+    async def pin_message(
+        self,
+        broadcaster_twitch_user_id,
+        message_id,
+    ):
+        raise RuntimeError("Simulated pin failure.")
+
+    async def unpin_message(
+        self,
+        broadcaster_twitch_user_id,
+        message_id,
+    ):
+        return None
+
+
 class TwitchWorkerTests(
     unittest.IsolatedAsyncioTestCase
 ):
@@ -191,6 +247,81 @@ class TwitchWorkerTests(
         self.assertGreaterEqual(
             runtime.bot_validation_calls,
             1,
+        )
+
+    async def test_trigger_errors_degrade_title_health(
+        self,
+    ) -> None:
+        temp_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_directory.cleanup)
+        database = Database(
+            Path(temp_directory.name) / "test.db"
+        )
+        await database.initialize()
+
+        identity_repository = IdentityRepository(database)
+        await identity_repository.save_twitch_account(
+            TwitchAccount(
+                twitch_user_id="100",
+                login="example_streamer",
+                display_name="Example Streamer",
+            )
+        )
+        await identity_repository.save_discord_account(
+            DiscordAccount(
+                discord_user_id="200",
+                username="example_user",
+                display_name="Example User",
+            )
+        )
+        await identity_repository.save_account_link(
+            AccountLink(
+                twitch_user_id="100",
+                discord_user_id="200",
+                status=AccountLinkStatus.VERIFIED,
+                verification_method="test",
+            )
+        )
+        await identity_repository.save_broadcaster(
+            Broadcaster(
+                twitch_user_id="100",
+                owner_discord_user_id="200",
+            )
+        )
+        await TriggerRepository(database).create_trigger(
+            Trigger(
+                broadcaster_twitch_user_id="100",
+                name="Solo",
+                expression="solo",
+                response_message="Solo mode is active.",
+            )
+        )
+
+        health_repository = FakeHealthRepository()
+        monitor = create_title_monitor(
+            database,
+            SimpleNamespace(
+                helix_gateway=PinFailingTitleGateway()
+            ),
+            health_repository,
+        )
+
+        with self.assertLogs(
+            "chimebuddy.twitch.triggers",
+            level="WARNING",
+        ):
+            report = await monitor.check_once()
+
+        self.assertEqual(report.error_count, 1)
+        self.assertEqual(
+            health_repository.failures[0][:2],
+            ("title_monitor", "100"),
+        )
+        self.assertEqual(
+            health_repository.failures[0][2][
+                "error_code"
+            ],
+            "title_trigger_failed",
         )
 
     async def test_rejects_invalid_token_interval(self):

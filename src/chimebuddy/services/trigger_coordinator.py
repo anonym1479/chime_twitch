@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -13,6 +14,11 @@ from chimebuddy.services.trigger_matcher import (
 from chimebuddy.services.trigger_state_machine import (
     TriggerAction,
     TriggerStateMachine,
+)
+
+
+logger = logging.getLogger(
+    "chimebuddy.twitch.triggers"
 )
 
 
@@ -50,6 +56,10 @@ class TriggerRunReport:
     deactivated_trigger_ids: tuple[int, ...]
     reset_trigger_ids: tuple[int, ...]
     errors: tuple[str, ...]
+
+    @property
+    def has_errors(self) -> bool:
+        return bool(self.errors)
 
 
 class TriggerCoordinator:
@@ -136,9 +146,17 @@ class TriggerCoordinator:
             )
 
             if state is None:
-                errors.append(
+                error = (
                     f"Trigger {trigger.trigger_id} has no "
                     "runtime state."
+                )
+                errors.append(error)
+                logger.error(
+                    "Trigger runtime state is missing: "
+                    "broadcaster=%s, trigger=%s, name=%r.",
+                    broadcaster_id,
+                    trigger.trigger_id,
+                    trigger.name,
                 )
                 cleanup_failed = True
                 continue
@@ -157,6 +175,14 @@ class TriggerCoordinator:
 
                 if success:
                     deactivated.append(trigger.trigger_id)
+                    logger.info(
+                        "Trigger deactivated: broadcaster=%s, "
+                        "trigger=%s, name=%r, reason=%s.",
+                        broadcaster_id,
+                        trigger.trigger_id,
+                        trigger.name,
+                        self._deactivation_reason(trigger),
+                    )
 
                 if error:
                     errors.append(error)
@@ -169,6 +195,13 @@ class TriggerCoordinator:
 
                 if was_reset:
                     reset.append(trigger.trigger_id)
+                    logger.info(
+                        "Trigger error reset: broadcaster=%s, "
+                        "trigger=%s, name=%r.",
+                        broadcaster_id,
+                        trigger.trigger_id,
+                        trigger.name,
+                    )
 
         # Only activate the selected trigger after old trigger
         # cleanup has completed successfully.
@@ -178,9 +211,17 @@ class TriggerCoordinator:
             )
 
             if state is None:
-                errors.append(
+                error = (
                     f"Trigger {selected_trigger.trigger_id} "
                     "has no runtime state."
+                )
+                errors.append(error)
+                logger.error(
+                    "Trigger runtime state is missing: "
+                    "broadcaster=%s, trigger=%s, name=%r.",
+                    broadcaster_id,
+                    selected_trigger.trigger_id,
+                    selected_trigger.name,
                 )
             else:
                 decision = self.state_machine.decide(
@@ -190,6 +231,13 @@ class TriggerCoordinator:
                 )
 
                 if decision.action is TriggerAction.ACTIVATE:
+                    logger.info(
+                        "Title trigger matched: broadcaster=%s, "
+                        "trigger=%s, name=%r.",
+                        broadcaster_id,
+                        selected_trigger.trigger_id,
+                        selected_trigger.name,
+                    )
                     success, error = await self._activate(
                         selected_trigger,
                         title,
@@ -216,6 +264,16 @@ class TriggerCoordinator:
                         deactivated.append(
                             selected_trigger.trigger_id
                         )
+                        logger.info(
+                            "Trigger deactivated: broadcaster=%s, "
+                            "trigger=%s, name=%r, reason=%s.",
+                            broadcaster_id,
+                            selected_trigger.trigger_id,
+                            selected_trigger.name,
+                            self._deactivation_reason(
+                                selected_trigger
+                            ),
+                        )
 
                     if error:
                         errors.append(error)
@@ -233,6 +291,14 @@ class TriggerCoordinator:
                     if was_reset:
                         reset.append(
                             selected_trigger.trigger_id
+                        )
+                        logger.info(
+                            "Trigger error reset: "
+                            "broadcaster=%s, trigger=%s, "
+                            "name=%r.",
+                            broadcaster_id,
+                            selected_trigger.trigger_id,
+                            selected_trigger.name,
                         )
 
         return TriggerRunReport(
@@ -263,10 +329,20 @@ class TriggerCoordinator:
                 trigger.broadcaster_twitch_user_id,
                 trigger.response_message,
             )
-        except Exception:
+        except Exception as exc:
             await self.repository.mark_operation_error(
                 trigger.trigger_id,
                 "Twitch chat message sending failed.",
+            )
+
+            logger.error(
+                "Trigger activation failed: broadcaster=%s, "
+                "trigger=%s, name=%r, operation=send_message, "
+                "error_type=%s.",
+                trigger.broadcaster_twitch_user_id,
+                trigger.trigger_id,
+                trigger.name,
+                type(exc).__name__,
             )
 
             return (
@@ -285,12 +361,20 @@ class TriggerCoordinator:
                     message_id,
                 )
                 was_pinned = True
-            except Exception:
+            except Exception as exc:
                 # The chat message was sent successfully. Keep the
                 # trigger active so it is not sent repeatedly.
                 pin_error = (
                     f"Trigger {trigger.trigger_id} sent its "
                     "message, but pinning failed."
+                )
+                logger.warning(
+                    "Trigger pinning failed: broadcaster=%s, "
+                    "trigger=%s, name=%r, error_type=%s.",
+                    trigger.broadcaster_twitch_user_id,
+                    trigger.trigger_id,
+                    trigger.name,
+                    type(exc).__name__,
                 )
 
         completed = (
@@ -309,11 +393,29 @@ class TriggerCoordinator:
                 is_pinned=was_pinned,
             )
 
+            logger.error(
+                "Trigger activation failed: broadcaster=%s, "
+                "trigger=%s, name=%r, "
+                "operation=complete_state.",
+                trigger.broadcaster_twitch_user_id,
+                trigger.trigger_id,
+                trigger.name,
+            )
+
             return (
                 False,
                 f"Trigger {trigger.trigger_id} could not "
                 "complete activation.",
             )
+
+        logger.info(
+            "Trigger activated: broadcaster=%s, trigger=%s, "
+            "name=%r, pinned=%s.",
+            trigger.broadcaster_twitch_user_id,
+            trigger.trigger_id,
+            trigger.name,
+            was_pinned,
+        )
 
         return True, pin_error
 
@@ -335,10 +437,20 @@ class TriggerCoordinator:
                     trigger.broadcaster_twitch_user_id,
                     state.message_id,
                 )
-            except Exception:
+            except Exception as exc:
                 await self.repository.mark_operation_error(
                     trigger.trigger_id,
                     "Twitch message unpinning failed.",
+                )
+
+                logger.error(
+                    "Trigger deactivation failed: "
+                    "broadcaster=%s, trigger=%s, name=%r, "
+                    "operation=unpin_message, error_type=%s.",
+                    trigger.broadcaster_twitch_user_id,
+                    trigger.trigger_id,
+                    trigger.name,
+                    type(exc).__name__,
                 )
 
                 return (
@@ -359,6 +471,15 @@ class TriggerCoordinator:
                 "Deactivation state could not be completed.",
             )
 
+            logger.error(
+                "Trigger deactivation failed: broadcaster=%s, "
+                "trigger=%s, name=%r, "
+                "operation=complete_state.",
+                trigger.broadcaster_twitch_user_id,
+                trigger.trigger_id,
+                trigger.name,
+            )
+
             return (
                 False,
                 f"Trigger {trigger.trigger_id} could not "
@@ -366,3 +487,10 @@ class TriggerCoordinator:
             )
 
         return True, None
+
+    @staticmethod
+    def _deactivation_reason(trigger: Trigger) -> str:
+        if not trigger.enabled:
+            return "trigger_disabled"
+
+        return "title_no_longer_matches"

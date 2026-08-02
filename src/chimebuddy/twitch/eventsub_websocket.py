@@ -112,6 +112,8 @@ class EventSubWebSocketService:
 
         self._recent_message_ids: deque[str] = deque()
         self._recent_message_id_set: set[str] = set()
+        self._interruption_started_at: float | None = None
+        self._interruption_reason: str | None = None
 
     async def run(
         self,
@@ -127,9 +129,12 @@ class EventSubWebSocketService:
                 await self._run_connection(stop_event)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 if stop_event.is_set():
                     break
+
+                reason = self._connection_failure_reason(exc)
+                self._record_interruption(reason)
 
                 await self._notify_status(
                     "reconnecting",
@@ -139,10 +144,22 @@ class EventSubWebSocketService:
                         "interrupted and is reconnecting."
                     ),
                 )
-                logger.exception(
-                    "Twitch EventSub WebSocket "
-                    "connection failed."
-                )
+                if reason == "unexpected_error":
+                    logger.exception(
+                        "Twitch EventSub connection "
+                        "failed unexpectedly."
+                    )
+                else:
+                    logger.warning(
+                        "Twitch EventSub connection "
+                        "interrupted: reason=%s. "
+                        "Reconnecting automatically.",
+                        reason,
+                    )
+                    logger.debug(
+                        "EventSub interruption traceback.",
+                        exc_info=True,
+                    )
 
             if stop_event.is_set():
                 break
@@ -185,6 +202,7 @@ class EventSubWebSocketService:
                 "Twitch EventSub session %s is ready.",
                 welcome.session_id,
             )
+            self._log_recovery(len(subscribed_ids))
             await self._notify_status(
                 "healthy",
                 broadcaster_ids=subscribed_ids,
@@ -290,6 +308,57 @@ class EventSubWebSocketService:
         )
 
         return websocket, welcome
+
+    def _record_interruption(self, reason: str) -> None:
+        if self._interruption_started_at is None:
+            self._interruption_started_at = (
+                asyncio.get_running_loop().time()
+            )
+
+        self._interruption_reason = reason
+
+    def _log_recovery(
+        self,
+        subscribed_broadcaster_count: int,
+    ) -> None:
+        if self._interruption_started_at is None:
+            return
+
+        downtime_seconds = max(
+            0.0,
+            asyncio.get_running_loop().time()
+            - self._interruption_started_at,
+        )
+
+        logger.info(
+            "Twitch EventSub connection recovered: "
+            "broadcasters=%s, downtime_seconds=%.1f, "
+            "previous_reason=%s.",
+            subscribed_broadcaster_count,
+            downtime_seconds,
+            self._interruption_reason or "unknown",
+        )
+
+        self._interruption_started_at = None
+        self._interruption_reason = None
+
+    @staticmethod
+    def _connection_failure_reason(
+        error: Exception,
+    ) -> str:
+        if isinstance(error, EventSubWebSocketError):
+            if "keepalive timed out" in str(error).casefold():
+                return "keepalive_timeout"
+
+            return "eventsub_protocol_error"
+
+        if isinstance(error, aiohttp.ClientConnectionError):
+            return "transport_closed"
+
+        if isinstance(error, TimeoutError):
+            return "connection_timeout"
+
+        return "unexpected_error"
 
     async def _notify_status(
         self,
