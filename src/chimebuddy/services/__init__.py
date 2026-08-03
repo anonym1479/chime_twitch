@@ -90,6 +90,10 @@ from chimebuddy.services.custom_command_management_service import (
     ManagedCustomCommandNotFoundError,
     ReservedCustomCommandNameError,
 )
+from chimebuddy.services.custom_command_runtime import (
+    CustomCommandChatGateway,
+    CustomCommandRuntime,
+)
 
 __all__ = [
     "ChatGateway",
@@ -158,4 +162,6 @@ __all__ = [
     "ManagedCustomCommandBroadcasterNotFoundError",
     "ManagedCustomCommandNotFoundError",
     "ReservedCustomCommandNameError",
+    "CustomCommandChatGateway",
+    "CustomCommandRuntime",
 ]

@@ -121,6 +121,37 @@ class TwitchCommandRouterTests(
         self.assertTrue(handled)
         self.assertEqual(calls, 1)
 
+    async def test_subscriber_can_use_subscriber_command(
+        self,
+    ) -> None:
+        router = TwitchCommandRouter()
+        calls = 0
+
+        async def handler(context):
+            nonlocal calls
+            calls += 1
+
+        router.register(
+            "subtest",
+            TwitchCommandPermission.SUBSCRIBER,
+            handler,
+        )
+
+        handled = await router.route(
+            make_message(
+                "_subtest",
+                badges=(
+                    TwitchChatBadge(
+                        set_id="subscriber",
+                        badge_id="1",
+                    ),
+                ),
+            )
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual(calls, 1)
+
     async def test_moderator_can_use_vip_command(
         self,
     ) -> None:

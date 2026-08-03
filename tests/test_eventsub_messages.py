@@ -61,6 +61,23 @@ class EventSubMessageTests(unittest.TestCase):
         self.assertTrue(message.is_moderator)
         self.assertFalse(message.is_vip)
         self.assertFalse(message.is_broadcaster)
+        self.assertFalse(message.is_subscriber)
+
+    def test_detects_subscriber_badge(self) -> None:
+        notification = create_notification()
+        event = notification["payload"]["event"]
+        event["badges"] = [
+            {
+                "set_id": "subscriber",
+                "id": "12",
+                "info": "12",
+            }
+        ]
+
+        message = parse_channel_chat_message(notification)
+
+        self.assertTrue(message.is_subscriber)
+        self.assertFalse(message.is_vip)
 
     def test_detects_broadcaster_by_id(self) -> None:
         notification = create_notification()

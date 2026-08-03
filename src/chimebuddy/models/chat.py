@@ -69,3 +69,7 @@ class TwitchChatMessage:
     @property
     def is_vip(self) -> bool:
         return "vip" in self.badge_set_ids
+
+    @property
+    def is_subscriber(self) -> bool:
+        return "subscriber" in self.badge_set_ids

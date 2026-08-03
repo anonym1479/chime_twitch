@@ -12,9 +12,13 @@ from chimebuddy.models import OAuthCredentialKind
 from chimebuddy.models.chat import TwitchChatMessage
 from chimebuddy.repositories import (
     BroadcasterRequestRepository,
+    CustomCommandRepository,
     IdentityRepository,
     RuntimeHealthRepository,
     TriggerRepository,
+)
+from chimebuddy.services.custom_command_runtime import (
+    CustomCommandRuntime,
 )
 from chimebuddy.services.stream_title_monitor import (
     BroadcasterTitleCheck,
@@ -170,11 +174,17 @@ class RoutedChatMessageHandler:
         self,
         bot_twitch_user_id: str,
         command_router: TwitchCommandRouter,
+        custom_command_runtime: (
+            CustomCommandRuntime | None
+        ) = None,
     ) -> None:
         self.bot_twitch_user_id = str(
             bot_twitch_user_id
         ).strip()
         self.command_router = command_router
+        self.custom_command_runtime = (
+            custom_command_runtime
+        )
 
     async def handle_chat_message(
         self,
@@ -203,7 +213,13 @@ class RoutedChatMessageHandler:
             message.text,
         )
 
-        await self.command_router.route(message)
+        handled = await self.command_router.route(message)
+
+        if (
+            not handled
+            and self.custom_command_runtime is not None
+        ):
+            await self.custom_command_runtime.route(message)
 
     @staticmethod
     def _role_for(
@@ -217,6 +233,9 @@ class RoutedChatMessageHandler:
 
         if message.is_vip:
             return "vip"
+
+        if message.is_subscriber:
+            return "subscriber"
 
         return "viewer"
 
@@ -316,6 +335,9 @@ def create_eventsub_service(
     health_repository: (
         RuntimeHealthRepository | None
     ) = None,
+    custom_command_runtime: (
+        CustomCommandRuntime | None
+    ) = None,
 ) -> EventSubWebSocketService:
     logger.info(
         "Preparing EventSub chat reception for "
@@ -371,6 +393,7 @@ def create_eventsub_service(
             RoutedChatMessageHandler(
                 runtime.bot_twitch_user_id,
                 create_command_router(runtime),
+                custom_command_runtime,
             )
         ),
         status_observer=record_eventsub_status,
@@ -809,6 +832,12 @@ async def run_twitch_worker(
     identity_repository = IdentityRepository(
         database
     )
+    custom_command_runtime = CustomCommandRuntime(
+        command_repository=CustomCommandRepository(
+            database
+        ),
+        chat_gateway=runtime.helix_gateway,
+    )
     request_repository = BroadcasterRequestRepository(
         database
     )
@@ -854,6 +883,7 @@ async def run_twitch_worker(
             runtime,
             broadcaster_ids,
             health_repository,
+            custom_command_runtime,
         )
 
     tasks = [

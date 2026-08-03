@@ -13,12 +13,14 @@ from chimebuddy.models import (
     Trigger,
     TwitchAccount,
 )
+from chimebuddy.models.chat import TwitchChatMessage
 from chimebuddy.repositories import (
     IdentityRepository,
     TriggerRepository,
 )
 from chimebuddy.twitch import StreamInformation
 from chimebuddy.twitch.worker import (
+    RoutedChatMessageHandler,
     create_title_monitor,
     eventsub_supervisor_loop,
     token_validation_loop,
@@ -203,6 +205,33 @@ class PinFailingTitleGateway:
         return None
 
 
+class RecordingCommandRoute:
+    def __init__(self, handled: bool) -> None:
+        self.handled = handled
+        self.messages = []
+
+    async def route(self, message) -> bool:
+        self.messages.append(message)
+        return self.handled
+
+
+def make_chat_message(
+    *,
+    chatter_id: str = "viewer-1",
+) -> TwitchChatMessage:
+    return TwitchChatMessage(
+        broadcaster_twitch_user_id="100",
+        broadcaster_login="streamer",
+        broadcaster_display_name="Streamer",
+        chatter_twitch_user_id=chatter_id,
+        chatter_login="viewer",
+        chatter_display_name="Viewer",
+        message_id="message-1",
+        text="_discord",
+        message_type="text",
+    )
+
+
 class TwitchWorkerTests(
     unittest.IsolatedAsyncioTestCase
 ):
@@ -248,6 +277,58 @@ class TwitchWorkerTests(
             runtime.bot_validation_calls,
             1,
         )
+
+    async def test_core_command_precedes_custom_command(
+        self,
+    ) -> None:
+        core = RecordingCommandRoute(True)
+        custom = RecordingCommandRoute(True)
+        handler = RoutedChatMessageHandler(
+            "bot-1",
+            core,
+            custom,
+        )
+
+        await handler.handle_chat_message(
+            make_chat_message()
+        )
+
+        self.assertEqual(len(core.messages), 1)
+        self.assertEqual(custom.messages, [])
+
+    async def test_unknown_core_falls_back_to_custom(
+        self,
+    ) -> None:
+        core = RecordingCommandRoute(False)
+        custom = RecordingCommandRoute(True)
+        handler = RoutedChatMessageHandler(
+            "bot-1",
+            core,
+            custom,
+        )
+
+        await handler.handle_chat_message(
+            make_chat_message()
+        )
+
+        self.assertEqual(len(core.messages), 1)
+        self.assertEqual(len(custom.messages), 1)
+
+    async def test_bot_reply_is_not_routed(self) -> None:
+        core = RecordingCommandRoute(False)
+        custom = RecordingCommandRoute(True)
+        handler = RoutedChatMessageHandler(
+            "bot-1",
+            core,
+            custom,
+        )
+
+        await handler.handle_chat_message(
+            make_chat_message(chatter_id="bot-1")
+        )
+
+        self.assertEqual(core.messages, [])
+        self.assertEqual(custom.messages, [])
 
     async def test_trigger_errors_degrade_title_health(
         self,

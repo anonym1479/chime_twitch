@@ -29,6 +29,7 @@ class TwitchCommandPermission(IntEnum):
     """
 
     EVERYONE = 0
+    SUBSCRIBER = 5
     VIP = 10
     MODERATOR = 20
     BROADCASTER = 30
@@ -196,6 +197,9 @@ class TwitchCommandRouter:
 
         if message.is_vip:
             return TwitchCommandPermission.VIP
+
+        if message.is_subscriber:
+            return TwitchCommandPermission.SUBSCRIBER
 
         return TwitchCommandPermission.EVERYONE
 
