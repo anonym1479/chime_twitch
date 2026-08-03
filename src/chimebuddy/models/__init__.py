@@ -31,6 +31,10 @@ from chimebuddy.models.runtime_health import (
     RuntimeErrorEvent,
     RuntimeHealthSnapshot,
 )
+from chimebuddy.models.custom_command import (
+    CustomCommand,
+    CustomCommandPermission,
+)
 
 __all__ = [
     "AccountLink",
@@ -43,6 +47,8 @@ __all__ = [
     "BroadcasterProfile",
     "BroadcasterRequest",
     "BroadcasterRequestStatus",
+    "CustomCommand",
+    "CustomCommandPermission",
     "DiscordAccount",
     "OAuthCredential",
     "OAuthCredentialKind",

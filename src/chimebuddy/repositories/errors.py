@@ -21,3 +21,11 @@ class BroadcasterPanelExistsError(RepositoryError):
 
 class AccountLinkIdentityConflictError(RepositoryError):
     """Raised when Discord or Twitch is linked to another identity."""
+
+
+class DuplicateCustomCommandNameError(RepositoryError):
+    """Raised when a broadcaster already has this command name."""
+
+
+class CustomCommandLimitError(RepositoryError):
+    """Raised when an atomic custom-command limit is reached."""

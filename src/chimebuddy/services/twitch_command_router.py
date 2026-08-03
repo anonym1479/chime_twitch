@@ -12,6 +12,14 @@ logger = logging.getLogger(
     "chimebuddy.twitch.commands"
 )
 
+V2PING_COMMAND_NAME = "v2ping"
+
+CORE_TWITCH_COMMAND_NAMES = frozenset(
+    {
+        V2PING_COMMAND_NAME,
+    }
+)
+
 
 class TwitchCommandPermission(IntEnum):
     """

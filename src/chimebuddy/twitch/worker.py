@@ -33,6 +33,7 @@ from chimebuddy.services.twitch_command_router import (
     TwitchCommandContext,
     TwitchCommandPermission,
     TwitchCommandRouter,
+    V2PING_COMMAND_NAME,
 )
 from chimebuddy.twitch.eventsub_websocket import (
     EventSubWebSocketService,
@@ -234,7 +235,7 @@ def create_command_router(
         )
 
     router.register(
-        "v2ping",
+        V2PING_COMMAND_NAME,
         TwitchCommandPermission.BROADCASTER,
         handle_v2ping,
     )

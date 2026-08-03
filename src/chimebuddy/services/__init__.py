@@ -80,6 +80,16 @@ from chimebuddy.services.trigger_management_service import (
     TriggerNameConflictError,
     TriggerValidationError,
 )
+from chimebuddy.services.custom_command_management_service import (
+    CustomCommandLimitReachedError,
+    CustomCommandManagementError,
+    CustomCommandManagementService,
+    CustomCommandNameConflictError,
+    CustomCommandValidationError,
+    ManagedCustomCommandBroadcasterNotFoundError,
+    ManagedCustomCommandNotFoundError,
+    ReservedCustomCommandNameError,
+)
 
 __all__ = [
     "ChatGateway",
@@ -140,4 +150,12 @@ __all__ = [
     "TriggerManagementService",
     "TriggerNameConflictError",
     "TriggerValidationError",
+    "CustomCommandLimitReachedError",
+    "CustomCommandManagementError",
+    "CustomCommandManagementService",
+    "CustomCommandNameConflictError",
+    "CustomCommandValidationError",
+    "ManagedCustomCommandBroadcasterNotFoundError",
+    "ManagedCustomCommandNotFoundError",
+    "ReservedCustomCommandNameError",
 ]

@@ -16,6 +16,8 @@ from chimebuddy.repositories.errors import (
     ActiveBlacklistEntryError,
     BroadcasterPanelExistsError,
     DuplicateTriggerNameError,
+    CustomCommandLimitError,
+    DuplicateCustomCommandNameError,
     OpenBroadcasterRequestError,
     PendingAccountLinkSessionError,
     RepositoryError,
@@ -35,6 +37,9 @@ from chimebuddy.repositories.trigger_repository import (
 from chimebuddy.repositories.app_settings_repository import (
     AppSettingsRepository,
 )
+from chimebuddy.repositories.custom_command_repository import (
+    CustomCommandRepository,
+)
 from chimebuddy.repositories.runtime_health_repository import (
     RuntimeHealthRepository,
 )
@@ -49,6 +54,9 @@ __all__ = [
     "BroadcasterPanelExistsError",
     "BroadcasterPanelRepository",
     "BroadcasterRequestRepository",
+    "CustomCommandLimitError",
+    "CustomCommandRepository",
+    "DuplicateCustomCommandNameError",
     "DuplicateTriggerNameError",
     "IdentityRepository",
     "OAuthCredentialRepository",

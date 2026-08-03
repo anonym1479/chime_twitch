@@ -495,4 +495,58 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=7,
+        name="create_custom_command_tables",
+        statements=(
+            """
+            CREATE TABLE custom_commands (
+                command_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcaster_twitch_user_id TEXT NOT NULL,
+                name TEXT NOT NULL COLLATE NOCASE,
+                response_message TEXT NOT NULL,
+                permission TEXT NOT NULL DEFAULT 'everyone',
+                cooldown_seconds INTEGER NOT NULL DEFAULT 30,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY (broadcaster_twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE,
+
+                CHECK (length(trim(name)) > 0),
+                CHECK (length(trim(response_message)) > 0),
+                CHECK (
+                    permission IN (
+                        'everyone',
+                        'subscriber',
+                        'vip',
+                        'moderator',
+                        'broadcaster'
+                    )
+                ),
+                CHECK (cooldown_seconds >= 0),
+                CHECK (enabled IN (0, 1))
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX
+                custom_commands_broadcaster_name_nocase_idx
+            ON custom_commands(
+                broadcaster_twitch_user_id,
+                name COLLATE NOCASE
+            )
+            """,
+            """
+            CREATE INDEX
+                custom_commands_broadcaster_enabled_idx
+            ON custom_commands(
+                broadcaster_twitch_user_id,
+                enabled,
+                command_id
+            )
+            """,
+        ),
+    ),
 )
