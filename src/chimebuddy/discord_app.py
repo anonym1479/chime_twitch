@@ -29,6 +29,7 @@ from chimebuddy.repositories import (
     OAuthCredentialRepository,
     RuntimeHealthRepository,
     BroadcasterPanelRepository,
+    CustomCommandRepository,
     TriggerRepository,
 )
 from chimebuddy.services import (
@@ -39,6 +40,7 @@ from chimebuddy.services import (
     BroadcasterProvisioningService,
     OnboardingService,
     ReviewDecisionService,
+    CustomCommandManagementService,
     TriggerManagementService,
 )
 from chimebuddy.twitch.device_authorization import (
@@ -61,6 +63,9 @@ from chimebuddy.discord_admin.broadcaster_panel import (
 )
 from chimebuddy.discord_admin.trigger_management import (
     DiscordTriggerManagementController,
+)
+from chimebuddy.discord_admin.custom_command_management import (
+    DiscordCustomCommandManagementController,
 )
 from chimebuddy.discord_admin.suspension import (
     DiscordBroadcasterSuspensionController,
@@ -133,6 +138,9 @@ async def run(settings: Settings) -> None:
     )
     trigger_repository = (
         TriggerRepository(database)
+    )
+    custom_command_repository = (
+        CustomCommandRepository(database)
     )
     runtime_health_repository = (
         RuntimeHealthRepository(database)
@@ -207,6 +215,27 @@ async def run(settings: Settings) -> None:
         )
     )
 
+    custom_command_management_service = (
+        CustomCommandManagementService(
+            command_repository=custom_command_repository,
+            identity_repository=identity_repository,
+        )
+    )
+
+    custom_command_management_controller = (
+        DiscordCustomCommandManagementController(
+            management_service=(
+                custom_command_management_service
+            ),
+            status_service=(
+                broadcaster_panel_status_service
+            ),
+            developer_discord_user_id=(
+                settings.developer_discord_user_id
+            ),
+        )
+    )
+
     broadcaster_panel_controller = (
         DiscordBroadcasterPanelController(
             status_service=(
@@ -221,6 +250,9 @@ async def run(settings: Settings) -> None:
             ),
             trigger_management_controller=(
                 trigger_management_controller
+            ),
+            custom_command_management_controller=(
+                custom_command_management_controller
             ),
             help_controller=help_controller,
         )

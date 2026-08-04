@@ -25,6 +25,9 @@ LIFECYCLE_BUTTON_CUSTOM_ID = (
 TITLE_TRIGGERS_BUTTON_CUSTOM_ID = (
     "chimebuddy:broadcaster:title_triggers"
 )
+CUSTOM_COMMANDS_BUTTON_CUSTOM_ID = (
+    "chimebuddy:broadcaster:custom_commands"
+)
 RECONNECT_TWITCH_BUTTON_CUSTOM_ID = (
     "chimebuddy:broadcaster:reconnect_twitch"
 )
@@ -365,6 +368,21 @@ class BroadcasterManagementView(discord.ui.View):
         )
 
     @discord.ui.button(
+        label="Custom commands",
+        style=discord.ButtonStyle.primary,
+        custom_id=CUSTOM_COMMANDS_BUTTON_CUSTOM_ID,
+    )
+    async def custom_commands_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.controller.handle_custom_commands(
+            interaction,
+            self.twitch_user_id,
+        )
+
+    @discord.ui.button(
         label="Reconnect Twitch",
         style=discord.ButtonStyle.success,
         emoji="🔗",
@@ -478,6 +496,7 @@ class DiscordBroadcasterPanelController:
         panel_repository,
         developer_discord_user_id: int,
         trigger_management_controller=None,
+        custom_command_management_controller=None,
         onboarding_controller=None,
         help_controller=None,
     ) -> None:
@@ -486,6 +505,9 @@ class DiscordBroadcasterPanelController:
         self.panel_repository = panel_repository
         self.trigger_management_controller = (
             trigger_management_controller
+        )
+        self.custom_command_management_controller = (
+            custom_command_management_controller
         )
         self.onboarding_controller = onboarding_controller
         self.help_controller = help_controller
@@ -894,6 +916,35 @@ class DiscordBroadcasterPanelController:
         await (
             self.trigger_management_controller
             .show_triggers(
+                interaction,
+                twitch_user_id,
+            )
+        )
+
+    async def handle_custom_commands(
+        self,
+        interaction: discord.Interaction,
+        twitch_user_id: str,
+    ) -> None:
+        status = await self._load_authorized_status(
+            interaction,
+            twitch_user_id,
+        )
+
+        if status is None:
+            return
+
+        if self.custom_command_management_controller is None:
+            await interaction.response.send_message(
+                "Custom command management is not "
+                "configured.",
+                ephemeral=True,
+            )
+            return
+
+        await (
+            self.custom_command_management_controller
+            .show_commands(
                 interaction,
                 twitch_user_id,
             )
