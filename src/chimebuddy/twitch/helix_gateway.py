@@ -328,6 +328,118 @@ class TwitchHelixGateway:
         if status not in {204, 404}:
             self._raise_api_error(status, data)
 
+    async def add_vip(
+        self,
+        broadcaster_twitch_user_id: str,
+        user_twitch_user_id: str,
+    ) -> None:
+        await self._manage_vip(
+            "POST", broadcaster_twitch_user_id, user_twitch_user_id
+        )
+
+    async def remove_vip(
+        self,
+        broadcaster_twitch_user_id: str,
+        user_twitch_user_id: str,
+    ) -> None:
+        await self._manage_vip(
+            "DELETE", broadcaster_twitch_user_id, user_twitch_user_id
+        )
+
+    async def _manage_vip(
+        self,
+        method: str,
+        broadcaster_twitch_user_id: str,
+        user_twitch_user_id: str,
+    ) -> None:
+        broadcaster_id = self._required_text(
+            broadcaster_twitch_user_id,
+            "broadcaster_twitch_user_id",
+        )
+        status, data = await self._request_as_broadcaster(
+            method,
+            "/channels/vips",
+            broadcaster_id,
+            params={
+                "broadcaster_id": broadcaster_id,
+                "user_id": self._required_text(
+                    user_twitch_user_id,
+                    "user_twitch_user_id",
+                ),
+            },
+            required_scopes=("channel:manage:vips",),
+        )
+        if status != 204:
+            self._raise_api_error(status, data)
+
+    async def timeout_user(
+        self,
+        broadcaster_twitch_user_id: str,
+        user_twitch_user_id: str,
+        duration_seconds: int,
+    ) -> None:
+        broadcaster_id = self._required_text(
+            broadcaster_twitch_user_id,
+            "broadcaster_twitch_user_id",
+        )
+        if duration_seconds <= 0:
+            raise ValueError("duration_seconds must be positive.")
+        status, data = await self._request(
+            "POST",
+            "/moderation/bans",
+            params={
+                "broadcaster_id": broadcaster_id,
+                "moderator_id": self.bot_twitch_user_id,
+            },
+            json_body={
+                "data": {
+                    "user_id": self._required_text(
+                        user_twitch_user_id,
+                        "user_twitch_user_id",
+                    ),
+                    "duration": duration_seconds,
+                }
+            },
+            required_scopes=("moderator:manage:banned_users",),
+        )
+        if status != 200:
+            self._raise_api_error(status, data)
+
+    async def _request_as_broadcaster(
+        self,
+        method: str,
+        path: str,
+        broadcaster_twitch_user_id: str,
+        *,
+        params: dict[str, str],
+        required_scopes: tuple[str, ...],
+    ) -> tuple[int, Any]:
+        broadcaster_id = self._required_text(
+            broadcaster_twitch_user_id,
+            "broadcaster_twitch_user_id",
+        )
+        access_token = await self.token_manager.get_access_token(
+            broadcaster_id,
+            OAuthCredentialKind.BROADCASTER,
+            required_scopes,
+        )
+        status, data = await self._perform_request(
+            method, path, access_token,
+            params=params, json_body=None,
+        )
+        if status != 401:
+            return status, data
+        token = await self.token_manager.recover_after_unauthorized(
+            broadcaster_id,
+            OAuthCredentialKind.BROADCASTER,
+            access_token,
+            required_scopes,
+        )
+        return await self._perform_request(
+            method, path, token,
+            params=params, json_body=None,
+        )
+
     async def _request(
         self,
         method: str,

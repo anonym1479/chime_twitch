@@ -43,6 +43,12 @@ from chimebuddy.repositories.custom_command_repository import (
 from chimebuddy.repositories.runtime_health_repository import (
     RuntimeHealthRepository,
 )
+from chimebuddy.repositories.reward_vip_repository import (
+    RewardVipRepository,
+)
+from chimebuddy.repositories.reward_action_log_repository import (
+    RewardActionLogRepository,
+)
 
 __all__ = [
     "AccountLinkCompletionRepository",
@@ -64,6 +70,8 @@ __all__ = [
     "PendingAccountLinkSessionError",
     "RepositoryError",
     "RuntimeHealthRepository",
+    "RewardVipRepository",
+    "RewardActionLogRepository",
     "TriggerRepository",
     "AppSettingsRepository",
 ]

@@ -14,6 +14,7 @@ from chimebuddy.models.chat import TwitchChatMessage
 from chimebuddy.twitch.eventsub_messages import (
     EventSubMessageError,
     parse_channel_chat_message,
+    parse_channel_point_redemption,
 )
 from chimebuddy.twitch.eventsub_subscriptions import (
     EventSubSubscriptionClient,
@@ -47,6 +48,11 @@ class ChatMessageHandler(Protocol):
         """Handle one parsed Twitch chat message."""
 
 
+class RedemptionHandler(Protocol):
+    async def handle_redemption(self, redemption) -> None:
+        """Handle a configured Channel Points redemption."""
+
+
 EventSubStatusObserver = Callable[
     [
         str,
@@ -73,6 +79,7 @@ class EventSubWebSocketService:
         subscription_client: EventSubSubscriptionClient,
         broadcaster_twitch_user_ids: tuple[str, ...],
         chat_message_handler: ChatMessageHandler,
+        redemption_handler: RedemptionHandler | None = None,
         *,
         reconnect_delay_seconds: float = (
             DEFAULT_RECONNECT_DELAY_SECONDS
@@ -105,6 +112,7 @@ class EventSubWebSocketService:
             broadcaster_ids
         )
         self.chat_message_handler = chat_message_handler
+        self.redemption_handler = redemption_handler
         self.reconnect_delay_seconds = (
             reconnect_delay_seconds
         )
@@ -390,30 +398,21 @@ class EventSubWebSocketService:
         self,
         websocket_session_id: str,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        results = await asyncio.gather(
-            *(
-                self.subscription_client.subscribe_to_chat(
-                    websocket_session_id,
-                    broadcaster_id,
-                )
-                for broadcaster_id
-                in self.broadcaster_twitch_user_ids
-            ),
-            return_exceptions=True,
-        )
-
         successful_ids = []
         failed_ids = []
-
-        for broadcaster_id, result in zip(
-            self.broadcaster_twitch_user_ids,
-            results,
-            strict=True,
-        ):
-            if isinstance(result, BaseException):
+        for broadcaster_id in self.broadcaster_twitch_user_ids:
+            try:
+                await self.subscription_client.subscribe_to_chat(
+                    websocket_session_id, broadcaster_id,
+                )
+                if self.redemption_handler is not None:
+                    await self.subscription_client.subscribe_to_redemptions(
+                        websocket_session_id, broadcaster_id,
+                    )
+            except Exception as result:
                 failed_ids.append(broadcaster_id)
                 logger.error(
-                    "Failed to subscribe to chat for "
+                    "Failed to subscribe to Twitch events for "
                     "broadcaster %s: %s",
                     broadcaster_id,
                     result,
@@ -566,6 +565,12 @@ class EventSubWebSocketService:
             metadata.get("subscription_type", "")
         ).strip()
 
+        if subscription_type == (
+            "channel.channel_points_custom_reward_redemption.add"
+        ):
+            await self._handle_redemption(envelope)
+            return
+
         if subscription_type != "channel.chat.message":
             return
 
@@ -609,6 +614,28 @@ class EventSubWebSocketService:
                 "for message %s.",
                 message.message_id,
             )
+
+    async def _handle_redemption(
+        self,
+        envelope: Mapping[str, Any],
+    ) -> None:
+        if self.redemption_handler is None:
+            return
+        try:
+            redemption = parse_channel_point_redemption(envelope)
+        except EventSubMessageError as exc:
+            logger.warning("Ignored malformed reward redemption: %s", exc)
+            return
+        asyncio.create_task(
+            self._run_redemption_handler(redemption),
+            name=f"reward-redemption-{redemption.redemption_id}",
+        )
+
+    async def _run_redemption_handler(self, redemption) -> None:
+        try:
+            await self.redemption_handler.handle_redemption(redemption)
+        except Exception:
+            logger.exception("Channel-point redemption handling failed.")
 
     def _remember_message_id(
         self,

@@ -47,7 +47,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.database_path.exists())
         self.assertEqual(
             applied_versions,
-            [1, 2, 3, 4, 5, 6, 7],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9],
         )
 
         async with self.database.connect() as connection:
@@ -74,7 +74,7 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             first_result,
-            [1, 2, 3, 4, 5, 6, 7],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9],
         )
         self.assertEqual(second_result, [])
 

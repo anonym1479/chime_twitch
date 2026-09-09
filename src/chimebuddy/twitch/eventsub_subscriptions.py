@@ -17,6 +17,9 @@ CHAT_SUBSCRIPTION_SCOPES = (
     "user:bot",
     "user:read:chat",
 )
+REDEMPTION_SUBSCRIPTION_SCOPES = (
+    "channel:read:redemptions",
+)
 
 
 class EventSubSubscriptionError(RuntimeError):
@@ -129,14 +132,73 @@ class EventSubSubscriptionClient:
             broadcaster_id,
         )
 
+    async def subscribe_to_redemptions(
+        self,
+        websocket_session_id: str,
+        broadcaster_twitch_user_id: str,
+    ) -> EventSubSubscription:
+        session_id = str(websocket_session_id).strip()
+        broadcaster_id = str(broadcaster_twitch_user_id).strip()
+        if not session_id or not broadcaster_id:
+            raise ValueError("session and broadcaster IDs cannot be empty.")
+
+        token = await self.token_manager.get_access_token(
+            broadcaster_id,
+            OAuthCredentialKind.BROADCASTER,
+            REDEMPTION_SUBSCRIPTION_SCOPES,
+        )
+        status, data = await self._request_redemptions(
+            token, session_id, broadcaster_id
+        )
+        if status == 401:
+            token = await self.token_manager.recover_after_unauthorized(
+                broadcaster_id, OAuthCredentialKind.BROADCASTER,
+                token, REDEMPTION_SUBSCRIPTION_SCOPES,
+            )
+            status, data = await self._request_redemptions(
+                token, session_id, broadcaster_id
+            )
+        if status != 202:
+            raise EventSubSubscriptionError(
+                "Twitch rejected the channel-points subscription "
+                f"for broadcaster {broadcaster_id} ({status}): "
+                f"{str(data.get('message', 'Unknown EventSub error')).strip()}"
+            )
+        return self._parse_subscription(
+            data, broadcaster_id,
+            expected_type=(
+                "channel.channel_points_custom_reward_redemption.add"
+            ),
+        )
+
+    async def _request_redemptions(
+        self, access_token: str, session_id: str, broadcaster_id: str,
+    ) -> tuple[int, dict[str, Any]]:
+        return await self._post_subscription(
+            access_token, session_id,
+            "channel.channel_points_custom_reward_redemption.add",
+            {"broadcaster_user_id": broadcaster_id},
+        )
+
     async def _request(
         self,
         access_token: str,
         session_id: str,
         broadcaster_id: str,
     ) -> tuple[int, dict[str, Any]]:
-        timeout = aiohttp.ClientTimeout(total=15)
+        return await self._post_subscription(
+            access_token, session_id, "channel.chat.message",
+            {
+                "broadcaster_user_id": broadcaster_id,
+                "user_id": self.bot_twitch_user_id,
+            },
+        )
 
+    async def _post_subscription(
+        self, access_token: str, session_id: str,
+        subscription_type: str, condition: dict[str, str],
+    ) -> tuple[int, dict[str, Any]]:
+        timeout = aiohttp.ClientTimeout(total=15)
         async with self.session.post(
             EVENTSUB_SUBSCRIPTIONS_URL,
             headers={
@@ -147,16 +209,9 @@ class EventSubSubscriptionClient:
                 "Content-Type": "application/json",
             },
             json={
-                "type": "channel.chat.message",
+                "type": subscription_type,
                 "version": "1",
-                "condition": {
-                    "broadcaster_user_id": (
-                        broadcaster_id
-                    ),
-                    "user_id": (
-                        self.bot_twitch_user_id
-                    ),
-                },
+                "condition": condition,
                 "transport": {
                     "method": "websocket",
                     "session_id": session_id,
@@ -194,6 +249,7 @@ class EventSubSubscriptionClient:
     def _parse_subscription(
         data: dict[str, Any],
         broadcaster_id: str,
+        expected_type: str = "channel.chat.message",
     ) -> EventSubSubscription:
         subscriptions = data.get("data")
 
@@ -231,7 +287,7 @@ class EventSubSubscriptionClient:
                 "is missing its status."
             )
 
-        if subscription_type != "channel.chat.message":
+        if subscription_type != expected_type:
             raise EventSubSubscriptionError(
                 "Twitch returned an unexpected "
                 "subscription type."

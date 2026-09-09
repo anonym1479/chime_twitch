@@ -73,6 +73,8 @@ from chimebuddy.discord_admin.suspension import (
 from chimebuddy.discord_admin.help import (
     DiscordHelpController,
 )
+from chimebuddy.discord_admin.ban_or_vip_log import DiscordBanOrVipLogger
+from chimebuddy.repositories.reward_action_log_repository import RewardActionLogRepository
 
 
 logger = logging.getLogger("chimebuddy.discord")
@@ -421,6 +423,10 @@ async def run(settings: Settings) -> None:
                 suspension_controller
             ),
             help_controller=help_controller,
+            reward_logger=DiscordBanOrVipLogger(
+                panel_repository=panel_repository,
+                log_repository=RewardActionLogRepository(database),
+            ),
         )
 
         panel_gateway.bind_client(client)

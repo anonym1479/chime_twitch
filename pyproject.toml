@@ -22,6 +22,7 @@ chimebuddy-authorize-broadcaster = "chimebuddy.tools.authorize_broadcaster:main"
 chimebuddy-bootstrap-test-channel = "chimebuddy.tools.bootstrap_test_channel:main"
 chimebuddy-simulate-title = "chimebuddy.tools.simulate_title:main"
 chimebuddy-backup-database = "chimebuddy.tools.backup_database:main"
+chimebuddy-configure-ban-or-vip = "chimebuddy.tools.configure_ban_or_vip:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

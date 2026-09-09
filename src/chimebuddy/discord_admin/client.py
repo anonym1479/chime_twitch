@@ -1,4 +1,5 @@
 import logging
+import asyncio
 
 import discord
 from discord import app_commands
@@ -68,6 +69,7 @@ class ChimeBuddyDiscordClient(discord.Client):
         help_controller: (
             DiscordHelpController | None
         ) = None,
+        reward_logger=None,
     ) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
@@ -97,6 +99,8 @@ class ChimeBuddyDiscordClient(discord.Client):
         )
         self.suspension_controller = suspension_controller
         self.help_controller = help_controller
+        self.reward_logger = reward_logger
+        self._reward_log_task: asyncio.Task | None = None
 
         self.command_tree = app_commands.CommandTree(
             self,
@@ -248,6 +252,11 @@ class ChimeBuddyDiscordClient(discord.Client):
         )
 
     async def on_ready(self) -> None:
+        if self.reward_logger is not None and self._reward_log_task is None:
+            self._reward_log_task = asyncio.create_task(
+                self.reward_logger.run(self),
+                name="discord-ban-or-vip-log",
+            )
         if self.user is None:
             logger.warning(
                 "Discord connected without a user."

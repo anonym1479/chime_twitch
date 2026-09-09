@@ -5,6 +5,7 @@ from chimebuddy.models.chat import (
     TwitchChatBadge,
     TwitchChatMessage,
 )
+from chimebuddy.models.ban_or_vip import ChannelPointRedemption
 
 
 class EventSubMessageError(ValueError):
@@ -150,4 +151,29 @@ def parse_channel_chat_message(
             "message_type",
         ),
         badges=tuple(badges),
+    )
+
+
+def parse_channel_point_redemption(
+    envelope: Mapping[str, Any],
+) -> ChannelPointRedemption:
+    metadata = _mapping(envelope.get("metadata"), "metadata")
+    if _required_text(metadata, "message_type") != "notification":
+        raise EventSubMessageError("EventSub message is not a notification.")
+    if _required_text(metadata, "subscription_type") != (
+        "channel.channel_points_custom_reward_redemption.add"
+    ):
+        raise EventSubMessageError("EventSub notification is not a redemption.")
+    payload = _mapping(envelope.get("payload"), "payload")
+    event = _mapping(payload.get("event"), "payload.event")
+    reward = _mapping(event.get("reward"), "payload.event.reward")
+    return ChannelPointRedemption(
+        redemption_id=_required_text(event, "id"),
+        broadcaster_twitch_user_id=_required_text(event, "broadcaster_user_id"),
+        broadcaster_login=_required_text(event, "broadcaster_user_login").lower(),
+        user_twitch_user_id=_required_text(event, "user_id"),
+        user_login=_required_text(event, "user_login").lower(),
+        user_display_name=_required_text(event, "user_name"),
+        reward_id=_required_text(reward, "id"),
+        reward_title=_required_text(reward, "title"),
     )

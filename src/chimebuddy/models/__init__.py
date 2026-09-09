@@ -35,6 +35,10 @@ from chimebuddy.models.custom_command import (
     CustomCommand,
     CustomCommandPermission,
 )
+from chimebuddy.models.ban_or_vip import (
+    ChannelPointRedemption,
+    RewardVipGrant,
+)
 
 __all__ = [
     "AccountLink",
@@ -49,11 +53,13 @@ __all__ = [
     "BroadcasterRequestStatus",
     "CustomCommand",
     "CustomCommandPermission",
+    "ChannelPointRedemption",
     "DiscordAccount",
     "OAuthCredential",
     "OAuthCredentialKind",
     "RuntimeErrorEvent",
     "RuntimeHealthSnapshot",
+    "RewardVipGrant",
     "OnboardingRequestEvent",
     "OPEN_BROADCASTER_REQUEST_STATUSES",
     "Trigger",

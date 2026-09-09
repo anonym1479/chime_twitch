@@ -15,11 +15,15 @@ from chimebuddy.repositories import (
     CustomCommandRepository,
     IdentityRepository,
     RuntimeHealthRepository,
+    RewardVipRepository,
+    RewardActionLogRepository,
     TriggerRepository,
 )
 from chimebuddy.services.custom_command_runtime import (
     CustomCommandRuntime,
 )
+from chimebuddy.services.ban_or_vip_service import BanOrVipService
+from chimebuddy.repositories.app_settings_repository import AppSettingsRepository
 from chimebuddy.services.stream_title_monitor import (
     BroadcasterTitleCheck,
     StreamTitleMonitor,
@@ -177,6 +181,7 @@ class RoutedChatMessageHandler:
         custom_command_runtime: (
             CustomCommandRuntime | None
         ) = None,
+        ban_or_vip_service: BanOrVipService | None = None,
     ) -> None:
         self.bot_twitch_user_id = str(
             bot_twitch_user_id
@@ -185,6 +190,7 @@ class RoutedChatMessageHandler:
         self.custom_command_runtime = (
             custom_command_runtime
         )
+        self.ban_or_vip_service = ban_or_vip_service
 
     async def handle_chat_message(
         self,
@@ -212,6 +218,9 @@ class RoutedChatMessageHandler:
             role,
             message.text,
         )
+
+        if self.ban_or_vip_service is not None:
+            await self.ban_or_vip_service.observe_chat_message(message)
 
         handled = await self.command_router.route(message)
 
@@ -338,6 +347,7 @@ def create_eventsub_service(
     custom_command_runtime: (
         CustomCommandRuntime | None
     ) = None,
+    ban_or_vip_service: BanOrVipService | None = None,
 ) -> EventSubWebSocketService:
     logger.info(
         "Preparing EventSub chat reception for "
@@ -394,8 +404,10 @@ def create_eventsub_service(
                 runtime.bot_twitch_user_id,
                 create_command_router(runtime),
                 custom_command_runtime,
+                ban_or_vip_service,
             )
         ),
+        redemption_handler=ban_or_vip_service,
         status_observer=record_eventsub_status,
     )
 
@@ -838,6 +850,12 @@ async def run_twitch_worker(
         ),
         chat_gateway=runtime.helix_gateway,
     )
+    ban_or_vip_service = BanOrVipService(
+        settings_repository=AppSettingsRepository(database),
+        vip_repository=RewardVipRepository(database),
+        helix_gateway=runtime.helix_gateway,
+        action_log_repository=RewardActionLogRepository(database),
+    )
     request_repository = BroadcasterRequestRepository(
         database
     )
@@ -884,6 +902,7 @@ async def run_twitch_worker(
             broadcaster_ids,
             health_repository,
             custom_command_runtime,
+            ban_or_vip_service,
         )
 
     tasks = [
@@ -900,6 +919,10 @@ async def run_twitch_worker(
                 health_repository=health_repository,
             ),
             name="token-validation",
+        ),
+        asyncio.create_task(
+            ban_or_vip_service.vip_expiry_loop(stop_event),
+            name="reward-vip-expiry",
         ),
         asyncio.create_task(
             eventsub_supervisor_loop(

@@ -549,4 +549,61 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=8,
+        name="create_ban_or_vip_tables",
+        statements=(
+            """
+            CREATE TABLE reward_vip_grants (
+                redemption_id TEXT PRIMARY KEY,
+                broadcaster_twitch_user_id TEXT NOT NULL,
+                user_twitch_user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                removed_at TEXT,
+                FOREIGN KEY (broadcaster_twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE,
+                CHECK (length(trim(redemption_id)) > 0),
+                CHECK (expires_at > 0),
+                CHECK (active IN (0, 1))
+            )
+            """,
+            """
+            CREATE INDEX reward_vip_grants_expiry_idx
+            ON reward_vip_grants(active, expires_at)
+            """,
+        ),
+    ),
+    Migration(
+        version=9,
+        name="create_reward_action_logs",
+        statements=(
+            """
+            CREATE TABLE reward_action_logs (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                redemption_id TEXT NOT NULL UNIQUE,
+                broadcaster_twitch_user_id TEXT NOT NULL,
+                user_login TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                action TEXT NOT NULL,
+                occurred_at TEXT NOT NULL,
+                delivered_at TEXT,
+                FOREIGN KEY (broadcaster_twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE reward_discord_threads (
+                broadcaster_twitch_user_id TEXT PRIMARY KEY,
+                discord_thread_id TEXT NOT NULL UNIQUE,
+                FOREIGN KEY (broadcaster_twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE
+            )
+            """,
+        ),
+    ),
 )

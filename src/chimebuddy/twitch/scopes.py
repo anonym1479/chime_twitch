@@ -1,5 +1,6 @@
 BOT_CHAT_SCOPES = (
     "moderator:manage:chat_messages",
+    "moderator:manage:banned_users",
     "user:bot",
     "user:read:chat",
     "user:write:chat",
@@ -7,4 +8,6 @@ BOT_CHAT_SCOPES = (
 
 BROADCASTER_CHAT_SCOPES = (
     "channel:bot",
+    "channel:manage:vips",
+    "channel:read:redemptions",
 )

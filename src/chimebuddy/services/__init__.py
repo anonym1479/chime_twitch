@@ -94,6 +94,7 @@ from chimebuddy.services.custom_command_runtime import (
     CustomCommandChatGateway,
     CustomCommandRuntime,
 )
+from chimebuddy.services.ban_or_vip_service import BanOrVipService
 
 __all__ = [
     "ChatGateway",
@@ -164,4 +165,5 @@ __all__ = [
     "ReservedCustomCommandNameError",
     "CustomCommandChatGateway",
     "CustomCommandRuntime",
+    "BanOrVipService",
 ]
