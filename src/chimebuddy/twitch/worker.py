@@ -43,6 +43,7 @@ from chimebuddy.services.twitch_command_router import (
     TwitchCommandRouter,
     V2PING_COMMAND_NAME,
 )
+from chimebuddy.twitch import runtime
 from chimebuddy.twitch.eventsub_websocket import (
     EventSubWebSocketService,
 )
@@ -394,6 +395,9 @@ def create_eventsub_service(
     return EventSubWebSocketService(
         session=runtime.session,
         subscription_client=(
+            runtime.eventsub_subscription_client
+        ),
+        redemption_subscription_client=(
             runtime.eventsub_subscription_client
         ),
         broadcaster_twitch_user_ids=(

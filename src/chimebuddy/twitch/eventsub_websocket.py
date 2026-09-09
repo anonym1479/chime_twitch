@@ -77,6 +77,7 @@ class EventSubWebSocketService:
         self,
         session: aiohttp.ClientSession,
         subscription_client: EventSubSubscriptionClient,
+        redemption_subscription_client: EventSubSubscriptionClient,
         broadcaster_twitch_user_ids: tuple[str, ...],
         chat_message_handler: ChatMessageHandler,
         redemption_handler: RedemptionHandler | None = None,
@@ -108,6 +109,9 @@ class EventSubWebSocketService:
 
         self.session = session
         self.subscription_client = subscription_client
+        self.redemption_subscription_client = (
+            redemption_subscription_client
+        )
         self.broadcaster_twitch_user_ids = (
             broadcaster_ids
         )
@@ -131,6 +135,15 @@ class EventSubWebSocketService:
             "Twitch EventSub WebSocket service started."
         )
         await self._notify_status("connecting")
+        redemption_task = asyncio.create_task(
+            self._run_redemption_connection(stop_event),
+            name="eventsub-redemptions",
+        )
+
+        redemption_task = asyncio.create_task(
+            self._run_redemption_connection(stop_event),
+            name="eventsub-redemption-websocket",
+        )
 
         while not stop_event.is_set():
             try:
@@ -186,10 +199,116 @@ class EventSubWebSocketService:
             except TimeoutError:
                 pass
 
+        redemption_task.cancel()
+
+        await asyncio.gather(
+            redemption_task,
+            return_exceptions=True,
+        )
+
         logger.info(
             "Twitch EventSub WebSocket service stopped."
         )
         await self._notify_status("stopped")
+
+    async def _run_redemption_connection(
+        self,
+        stop_event: asyncio.Event,
+    ) -> None:
+        while not stop_event.is_set():
+            websocket = None
+
+            try:
+                websocket, welcome = await self._connect(
+                    EVENTSUB_WEBSOCKET_URL
+                )
+
+                for broadcaster_id in self.broadcaster_twitch_user_ids:
+                    await (
+                        self.redemption_subscription_client
+                        .subscribe_to_redemptions(
+                            welcome.session_id,
+                            broadcaster_id,
+                        )
+                    )
+
+                    logger.info(
+                        "Subscribed to Twitch channel-point "
+                        "redemptions for broadcaster %s.",
+                        broadcaster_id,
+                    )
+
+                while not stop_event.is_set():
+                    reconnect_url = (
+                        await self._consume_until_reconnect(
+                            websocket,
+                            welcome.keepalive_timeout_seconds,
+                            stop_event,
+                        )
+                    )
+
+                    if (
+                        reconnect_url is None
+                        or stop_event.is_set()
+                    ):
+                        return
+
+                    replacement, replacement_welcome = (
+                        await self._connect(reconnect_url)
+                    )
+
+                    for broadcaster_id in self.broadcaster_twitch_user_ids:
+                        await (
+                            self.redemption_subscription_client
+                            .subscribe_to_redemptions(
+                                replacement_welcome.session_id,
+                                broadcaster_id,
+                            )
+                        )
+
+                        logger.info(
+                            "Re-subscribed to Twitch channel-point "
+                            "redemptions for broadcaster %s.",
+                            broadcaster_id,
+                        )
+
+                    await websocket.close()
+
+                    websocket = replacement
+                    welcome = replacement_welcome
+
+                    logger.info(
+                        "Twitch EventSub redemption WebSocket "
+                        "handover completed. New session: %s",
+                        welcome.session_id,
+                    )
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                if stop_event.is_set():
+                    return
+
+                logger.exception(
+                    "Twitch EventSub redemption connection "
+                    "failed. Reconnecting automatically."
+                )
+
+                try:
+                    await asyncio.wait_for(
+                        stop_event.wait(),
+                        timeout=self.reconnect_delay_seconds,
+                    )
+                except TimeoutError:
+                    pass
+
+            finally:
+                if (
+                    websocket is not None
+                    and not websocket.closed
+                ):
+                    await websocket.close()
 
     async def _run_connection(
         self,
@@ -400,20 +519,18 @@ class EventSubWebSocketService:
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         successful_ids = []
         failed_ids = []
+
         for broadcaster_id in self.broadcaster_twitch_user_ids:
             try:
                 await self.subscription_client.subscribe_to_chat(
-                    websocket_session_id, broadcaster_id,
+                    websocket_session_id,
+                    broadcaster_id,
                 )
-                if self.redemption_handler is not None:
-                    await self.subscription_client.subscribe_to_redemptions(
-                        websocket_session_id, broadcaster_id,
-                    )
             except Exception as result:
                 failed_ids.append(broadcaster_id)
                 logger.error(
-                    "Failed to subscribe to Twitch events for "
-                    "broadcaster %s: %s",
+                    "Failed to subscribe to Twitch chat events "
+                    "for broadcaster %s: %s",
                     broadcaster_id,
                     result,
                 )
