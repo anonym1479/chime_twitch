@@ -23,6 +23,7 @@ chimebuddy-bootstrap-test-channel = "chimebuddy.tools.bootstrap_test_channel:mai
 chimebuddy-simulate-title = "chimebuddy.tools.simulate_title:main"
 chimebuddy-backup-database = "chimebuddy.tools.backup_database:main"
 chimebuddy-configure-ban-or-vip = "chimebuddy.tools.configure_ban_or_vip:main"
+chimebuddy-list-channel-rewards = "chimebuddy.tools.list_channel_rewards:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -337,6 +337,25 @@ class TwitchHelixGateway:
             "POST", broadcaster_twitch_user_id, user_twitch_user_id
         )
 
+    async def list_custom_rewards(
+        self,
+        broadcaster_twitch_user_id: str,
+    ) -> list[dict[str, Any]]:
+        broadcaster_id = self._required_text(
+            broadcaster_twitch_user_id,
+            "broadcaster_twitch_user_id",
+        )
+        status, data = await self._request_as_broadcaster(
+            "GET",
+            "/channel_points/custom_rewards",
+            broadcaster_id,
+            params={"broadcaster_id": broadcaster_id},
+            required_scopes=("channel:read:redemptions",),
+        )
+        if status != 200:
+            self._raise_api_error(status, data)
+        return self._data_list(data)
+
     async def remove_vip(
         self,
         broadcaster_twitch_user_id: str,
