@@ -9,6 +9,7 @@ from chimebuddy.models.ban_or_vip import (
     RewardVipGrant,
 )
 from chimebuddy.models.chat import TwitchChatMessage
+from chimebuddy.twitch.helix_gateway import TwitchAPIError
 from chimebuddy.repositories.app_settings_repository import AppSettingsRepository
 from chimebuddy.repositories.reward_vip_repository import RewardVipRepository
 from chimebuddy.repositories.reward_action_log_repository import RewardActionLogRepository
@@ -77,25 +78,67 @@ class BanOrVipService:
         if window is not None:
             window.spoke.set()
 
-    async def _award_vip(self, redemption: ChannelPointRedemption) -> None:
-        await self.helix_gateway.add_vip(
-            redemption.broadcaster_twitch_user_id,
-            redemption.user_twitch_user_id,
-        )
+    async def _award_vip(
+        self,
+        redemption: ChannelPointRedemption,
+    ) -> None:
+        try:
+            await self.helix_gateway.add_vip(
+                redemption.broadcaster_twitch_user_id,
+                redemption.user_twitch_user_id,
+            )
+        except TwitchAPIError as exc:
+            if (
+                exc.status == 422
+                and exc.message
+                == "The specified user is already a VIP of this channel."
+            ):
+                await self.helix_gateway.refund_redemption(
+                    redemption.broadcaster_twitch_user_id,
+                    redemption.reward_id,
+                    redemption.redemption_id,
+                )
+
+                await self.helix_gateway.send_message(
+                    redemption.broadcaster_twitch_user_id,
+                    f"🪙 @{redemption.user_login}, "
+                    "te már VIP vagy bolond! A beváltást visszatérítettük.",
+                )
+
+                logger.warning(
+                    "Refunded redemption %s because user %s "
+                    "was already a VIP.",
+                    redemption.redemption_id,
+                    redemption.user_login,
+                )
+                return
+
+            raise
+
         await self.vip_repository.create(RewardVipGrant(
             redemption_id=redemption.redemption_id,
-            broadcaster_twitch_user_id=redemption.broadcaster_twitch_user_id,
-            user_twitch_user_id=redemption.user_twitch_user_id,
+            broadcaster_twitch_user_id=(
+                redemption.broadcaster_twitch_user_id
+            ),
+            user_twitch_user_id=(
+                redemption.user_twitch_user_id
+            ),
             expires_at=int(time.time()) + VIP_DURATION_SECONDS,
         ))
+
         await self.helix_gateway.send_message(
             redemption.broadcaster_twitch_user_id,
             f"🪙 FEJ! @{redemption.user_login} 7 nap VIP-et kapott!",
         )
+
         await self.action_log_repository.create_success(
             redemption_id=redemption.redemption_id,
-            broadcaster_twitch_user_id=redemption.broadcaster_twitch_user_id,
-            user_login=redemption.user_login, outcome="FEJ", action="7 nap VIP",
+            broadcaster_twitch_user_id=(
+                redemption.broadcaster_twitch_user_id
+            ),
+            user_login=redemption.user_login,
+            outcome="FEJ",
+            action="7 nap VIP",
         )
 
     async def _last_word_then_timeout(self, redemption: ChannelPointRedemption) -> None:

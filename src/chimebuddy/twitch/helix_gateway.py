@@ -356,6 +356,43 @@ class TwitchHelixGateway:
             self._raise_api_error(status, data)
         return self._data_list(data)
 
+    async def refund_redemption(
+        self,
+        broadcaster_twitch_user_id: str,
+        reward_id: str,
+        redemption_id: str,
+    ) -> None:
+        broadcaster_id = self._required_text(
+            broadcaster_twitch_user_id,
+            "broadcaster_twitch_user_id",
+        )
+        clean_reward_id = self._required_text(
+            reward_id,
+            "reward_id",
+        )
+        clean_redemption_id = self._required_text(
+            redemption_id,
+            "redemption_id",
+        )
+
+        status, data = await self._request_as_broadcaster(
+            "PATCH",
+            "/channel_points/custom_rewards/redemptions",
+            broadcaster_id,
+            params={
+                "broadcaster_id": broadcaster_id,
+                "reward_id": clean_reward_id,
+                "id": clean_redemption_id,
+            },
+            json_body={
+                "status": "CANCELED",
+            },
+            required_scopes=("channel:manage:redemptions",),
+        )
+
+        if status != 200:
+            self._raise_api_error(status, data)
+
     async def remove_vip(
         self,
         broadcaster_twitch_user_id: str,
@@ -431,6 +468,7 @@ class TwitchHelixGateway:
         broadcaster_twitch_user_id: str,
         *,
         params: dict[str, str],
+        json_body: dict[str, Any] | None = None,
         required_scopes: tuple[str, ...],
     ) -> tuple[int, Any]:
         broadcaster_id = self._required_text(
@@ -443,11 +481,15 @@ class TwitchHelixGateway:
             required_scopes,
         )
         status, data = await self._perform_request(
-            method, path, access_token,
-            params=params, json_body=None,
+            method,
+            path,
+            access_token,
+            params=params,
+            json_body=json_body,
         )
         if status != 401:
             return status, data
+
         token = await self.token_manager.recover_after_unauthorized(
             broadcaster_id,
             OAuthCredentialKind.BROADCASTER,
@@ -455,8 +497,11 @@ class TwitchHelixGateway:
             required_scopes,
         )
         return await self._perform_request(
-            method, path, token,
-            params=params, json_body=None,
+            method,
+            path,
+            token,
+            params=params,
+            json_body=json_body,
         )
 
     async def _request(

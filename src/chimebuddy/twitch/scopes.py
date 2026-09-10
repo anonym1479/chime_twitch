@@ -9,5 +9,6 @@ BOT_CHAT_SCOPES = (
 BROADCASTER_CHAT_SCOPES = (
     "channel:bot",
     "channel:manage:vips",
+    "channel:manage:redemptions",
     "channel:read:redemptions",
 )
