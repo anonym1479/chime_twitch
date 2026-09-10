@@ -135,10 +135,6 @@ class EventSubWebSocketService:
             "Twitch EventSub WebSocket service started."
         )
         await self._notify_status("connecting")
-        redemption_task = asyncio.create_task(
-            self._run_redemption_connection(stop_event),
-            name="eventsub-redemptions",
-        )
 
         redemption_task = asyncio.create_task(
             self._run_redemption_connection(stop_event),
