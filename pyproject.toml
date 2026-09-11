@@ -24,6 +24,7 @@ chimebuddy-simulate-title = "chimebuddy.tools.simulate_title:main"
 chimebuddy-backup-database = "chimebuddy.tools.backup_database:main"
 chimebuddy-configure-ban-or-vip = "chimebuddy.tools.configure_ban_or_vip:main"
 chimebuddy-list-channel-rewards = "chimebuddy.tools.list_channel_rewards:main"
+chimebuddy-set-ban-or-vip-user-chance = "chimebuddy.tools.set_ban_or_vip_user_chance:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

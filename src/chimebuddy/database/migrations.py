@@ -606,4 +606,66 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=10,
+        name="create_ban_or_vip_custom_odds",
+        statements=(
+            """
+            CREATE TABLE ban_or_vip_custom_odds (
+                broadcaster_twitch_user_id TEXT NOT NULL,
+                user_twitch_user_id TEXT NOT NULL,
+                vip_probability INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (
+                    broadcaster_twitch_user_id,
+                    user_twitch_user_id
+                ),
+
+                FOREIGN KEY (broadcaster_twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE,
+
+                CHECK (vip_probability BETWEEN 0 AND 100)
+            )
+            """,
+        ),
+    ),
+    Migration(
+        version=11,
+        name="create_ban_or_vip_user_settings",
+        statements=(
+            """
+            CREATE TABLE ban_or_vip_user_settings (
+                broadcaster_twitch_user_id TEXT NOT NULL,
+                user_twitch_user_id TEXT NOT NULL,
+                vip_chance REAL NOT NULL DEFAULT 50.0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                PRIMARY KEY (
+                    broadcaster_twitch_user_id,
+                    user_twitch_user_id
+                ),
+
+                FOREIGN KEY (broadcaster_twitch_user_id)
+                    REFERENCES broadcasters(twitch_user_id)
+                    ON DELETE CASCADE,
+
+                CHECK (vip_chance >= 0.0 AND vip_chance <= 100.0)
+            )
+            """,
+        ),
+    ),
+    Migration(
+        version=12,
+        name="add_vip_chance_to_reward_action_logs",
+        statements=(
+            """
+            ALTER TABLE reward_action_logs
+            ADD COLUMN vip_chance REAL NOT NULL DEFAULT 50.0
+            """,
+        ),
+    ),
 )

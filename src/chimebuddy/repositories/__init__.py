@@ -49,6 +49,13 @@ from chimebuddy.repositories.reward_vip_repository import (
 from chimebuddy.repositories.reward_action_log_repository import (
     RewardActionLogRepository,
 )
+from chimebuddy.repositories.ban_or_vip_odds_repository import (
+    BanOrVipOddsRepository,
+)
+from chimebuddy.repositories.ban_or_vip_user_settings_repository import (
+    BanOrVipUserSettings,
+    BanOrVipUserSettingsRepository,
+)
 
 __all__ = [
     "AccountLinkCompletionRepository",
@@ -74,4 +81,7 @@ __all__ = [
     "RewardActionLogRepository",
     "TriggerRepository",
     "AppSettingsRepository",
+    "BanOrVipOddsRepository",
+    "BanOrVipUserSettings",
+    "BanOrVipUserSettingsRepository",
 ]

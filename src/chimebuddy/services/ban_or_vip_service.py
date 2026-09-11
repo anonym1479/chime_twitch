@@ -13,6 +13,7 @@ from chimebuddy.twitch.helix_gateway import TwitchAPIError
 from chimebuddy.repositories.app_settings_repository import AppSettingsRepository
 from chimebuddy.repositories.reward_vip_repository import RewardVipRepository
 from chimebuddy.repositories.reward_action_log_repository import RewardActionLogRepository
+from chimebuddy.repositories.ban_or_vip_user_settings_repository import BanOrVipUserSettingsRepository
 
 
 logger = logging.getLogger("chimebuddy.ban_or_vip")
@@ -31,14 +32,21 @@ class LastWordWindow:
 class BanOrVipService:
     """In-memory coin toss and last-word flow; only VIP grants persist."""
 
-    def __init__(self, *, settings_repository: AppSettingsRepository,
-                 vip_repository: RewardVipRepository, helix_gateway,
-                 action_log_repository: RewardActionLogRepository,
-                 rng: random.Random | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings_repository: AppSettingsRepository,
+        vip_repository: RewardVipRepository,
+        helix_gateway,
+        action_log_repository: RewardActionLogRepository,
+        user_settings_repository: BanOrVipUserSettingsRepository,
+        rng: random.Random | None = None
+    ) -> None:
         self.settings_repository = settings_repository
         self.vip_repository = vip_repository
         self.helix_gateway = helix_gateway
         self.action_log_repository = action_log_repository
+        self.user_settings_repository = user_settings_repository
         self.rng = rng or random.Random()
         self._last_word_windows: dict[tuple[str, str], LastWordWindow] = {}
         self._redemption_ids: set[str] = set()
@@ -59,13 +67,25 @@ class BanOrVipService:
         try:
             await self.helix_gateway.send_message(
                 redemption.broadcaster_twitch_user_id,
-                f"🪙 @{redemption.user_login} feldobta az érmét! Várjuk az eredményt...",
+                f"🪙 @{redemption.user_login} feldobta az érmét!",
             )
-            await asyncio.sleep(self.rng.randint(3, 10))
-            if self.rng.choice((True, False)):
-                await self._award_vip(redemption)
+            await asyncio.sleep(self.rng.randint(3, 20))
+
+            vip_chance = await self.user_settings_repository.get(
+                redemption.broadcaster_twitch_user_id,
+                redemption.user_twitch_user_id,
+            )
+
+            if self.rng.random() < vip_chance / 100.0:
+                await self._award_vip(
+                    redemption,
+                    vip_chance=vip_chance,
+                )
             else:
-                await self._last_word_then_timeout(redemption)
+                await self._last_word_then_timeout(
+                    redemption,
+                    vip_chance=vip_chance,
+                )
         except Exception:
             logger.exception("Ban or VIP failed for redemption %s.", redemption.redemption_id)
             raise
@@ -81,6 +101,8 @@ class BanOrVipService:
     async def _award_vip(
         self,
         redemption: ChannelPointRedemption,
+        *,
+        vip_chance: float,
     ) -> None:
         try:
             await self.helix_gateway.add_vip(
@@ -93,21 +115,26 @@ class BanOrVipService:
                 and exc.message
                 == "The specified user is already a VIP of this channel."
             ):
-                await self.helix_gateway.refund_redemption(
-                    redemption.broadcaster_twitch_user_id,
-                    redemption.reward_id,
-                    redemption.redemption_id,
-                )
-
                 await self.helix_gateway.send_message(
                     redemption.broadcaster_twitch_user_id,
                     f"🪙 @{redemption.user_login}, "
-                    "te már VIP vagy bolond! A beváltást visszatérítettük.",
+                    "Már VIP vagy bolond! "
+                    "Megúsztad a TO-t. (Egyelőre ;) )",
                 )
 
-                logger.warning(
-                    "Refunded redemption %s because user %s "
-                    "was already a VIP.",
+                await self.action_log_repository.create_success(
+                    redemption_id=redemption.redemption_id,
+                    broadcaster_twitch_user_id=(
+                        redemption.broadcaster_twitch_user_id
+                    ),
+                    user_login=redemption.user_login,
+                    outcome="already_vip",
+                    vip_chance=vip_chance,
+                )
+
+                logger.info(
+                    "Redemption %s completed as already_vip "
+                    "for user %s.",
                     redemption.redemption_id,
                     redemption.user_login,
                 )
@@ -128,7 +155,7 @@ class BanOrVipService:
 
         await self.helix_gateway.send_message(
             redemption.broadcaster_twitch_user_id,
-            f"🪙 FEJ! @{redemption.user_login} 7 nap VIP-et kapott!",
+            f"🪙 FEJ! @{redemption.user_login} 7 nap VIP-et nyert!",
         )
 
         await self.action_log_repository.create_success(
@@ -138,10 +165,15 @@ class BanOrVipService:
             ),
             user_login=redemption.user_login,
             outcome="FEJ",
-            action="7 nap VIP",
+            vip_chance=vip_chance,
         )
 
-    async def _last_word_then_timeout(self, redemption: ChannelPointRedemption) -> None:
+    async def _last_word_then_timeout(
+            self,
+            redemption: ChannelPointRedemption,
+            *,
+            vip_chance: float,
+    ) -> None:
         await self.helix_gateway.send_message(
             redemption.broadcaster_twitch_user_id,
             f"🔨 @{redemption.user_login}, utolsó szó jogán?",
@@ -159,15 +191,18 @@ class BanOrVipService:
                 redemption.broadcaster_twitch_user_id,
                 redemption.user_twitch_user_id,
                 TIMEOUT_DURATION_SECONDS,
+                reason="ban_or_vip",
             )
             await self.helix_gateway.send_message(
                 redemption.broadcaster_twitch_user_id,
-                f"🔨 ÍRÁS! @{redemption.user_login} 24 órás timeoutot kapott.",
+                f"🔨 @{redemption.user_login} 24óra múlva találkozunk!",
             )
             await self.action_log_repository.create_success(
                 redemption_id=redemption.redemption_id,
                 broadcaster_twitch_user_id=redemption.broadcaster_twitch_user_id,
-                user_login=redemption.user_login, outcome="ÍRÁS", action="24 órás timeout",
+                user_login=redemption.user_login,
+                outcome="ÍRÁS",
+                vip_chance=vip_chance,
             )
         finally:
             self._last_word_windows.pop(key, None)

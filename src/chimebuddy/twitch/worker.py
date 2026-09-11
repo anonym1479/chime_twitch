@@ -19,6 +19,7 @@ from chimebuddy.repositories import (
     RewardActionLogRepository,
     TriggerRepository,
 )
+from chimebuddy.repositories.ban_or_vip_user_settings_repository import BanOrVipUserSettingsRepository
 from chimebuddy.services.custom_command_runtime import (
     CustomCommandRuntime,
 )
@@ -856,6 +857,7 @@ async def run_twitch_worker(
     )
     ban_or_vip_service = BanOrVipService(
         settings_repository=AppSettingsRepository(database),
+        user_settings_repository=BanOrVipUserSettingsRepository(database),
         vip_repository=RewardVipRepository(database),
         helix_gateway=runtime.helix_gateway,
         action_log_repository=RewardActionLogRepository(database),
