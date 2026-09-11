@@ -10,7 +10,7 @@ class RewardActionLog:
     broadcaster_twitch_user_id: str
     user_login: str
     outcome: str
-    action: str
+    vip_chance: float
     occurred_at: str
 
 
@@ -20,16 +20,29 @@ class RewardActionLogRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    async def create_success(self, *, redemption_id: str, broadcaster_twitch_user_id: str,
-                             user_login: str, outcome: str, action: str) -> None:
+    async def create_success(
+        self,
+        *,
+        redemption_id: str,
+        broadcaster_twitch_user_id: str,
+        user_login: str,
+        outcome: str,
+        vip_chance: float,
+    ) -> None:
         async with self.database.connect() as connection:
             await connection.execute(
                 """INSERT INTO reward_action_logs (
                     redemption_id, broadcaster_twitch_user_id, user_login,
-                    outcome, action, occurred_at
+                    outcome, vip_chance, occurred_at
                 ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (redemption_id, broadcaster_twitch_user_id, user_login,
-                 outcome, action, datetime.now(timezone.utc).isoformat()),
+                (
+                    redemption_id,
+                    broadcaster_twitch_user_id,
+                    user_login,
+                    outcome,
+                    vip_chance,
+                    datetime.now(timezone.utc).isoformat()
+                ),
             )
             await connection.commit()
 
@@ -37,7 +50,7 @@ class RewardActionLogRepository:
         async with self.database.connect() as connection:
             cursor = await connection.execute(
                 """SELECT redemption_id, broadcaster_twitch_user_id, user_login,
-                outcome, action, occurred_at FROM reward_action_logs
+                outcome, vip_chance, occurred_at FROM reward_action_logs
                 WHERE delivered_at IS NULL ORDER BY log_id"""
             )
             rows = await cursor.fetchall()
