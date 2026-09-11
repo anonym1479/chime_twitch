@@ -211,6 +211,39 @@ class EventSubWebSocketService:
         self,
         stop_event: asyncio.Event,
     ) -> None:
+        tasks = [
+            asyncio.create_task(
+                self._run_single_redemption_connection(
+                    broadcaster_id,
+                    stop_event,
+                ),
+                name=(
+                    "eventsub-redemption-websocket-"
+                    f"{broadcaster_id}"
+                ),
+            )
+            for broadcaster_id in self.broadcaster_twitch_user_ids
+        ]
+
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            for task in tasks:
+                task.cancel()
+
+            await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
+
+
+    async def _run_single_redemption_connection(
+        self,
+        broadcaster_id: str,
+        stop_event: asyncio.Event,
+    ) -> None:
         while not stop_event.is_set():
             websocket = None
 
@@ -219,20 +252,19 @@ class EventSubWebSocketService:
                     EVENTSUB_WEBSOCKET_URL
                 )
 
-                for broadcaster_id in self.broadcaster_twitch_user_ids:
-                    await (
-                        self.redemption_subscription_client
-                        .subscribe_to_redemptions(
-                            welcome.session_id,
-                            broadcaster_id,
-                        )
-                    )
-
-                    logger.info(
-                        "Subscribed to Twitch channel-point "
-                        "redemptions for broadcaster %s.",
+                await (
+                    self.redemption_subscription_client
+                    .subscribe_to_redemptions(
+                        welcome.session_id,
                         broadcaster_id,
                     )
+                )
+
+                logger.info(
+                    "Subscribed to Twitch channel-point "
+                    "redemptions for broadcaster %s.",
+                    broadcaster_id,
+                )
 
                 while not stop_event.is_set():
                     reconnect_url = (
@@ -253,20 +285,19 @@ class EventSubWebSocketService:
                         await self._connect(reconnect_url)
                     )
 
-                    for broadcaster_id in self.broadcaster_twitch_user_ids:
-                        await (
-                            self.redemption_subscription_client
-                            .subscribe_to_redemptions(
-                                replacement_welcome.session_id,
-                                broadcaster_id,
-                            )
-                        )
-
-                        logger.info(
-                            "Re-subscribed to Twitch channel-point "
-                            "redemptions for broadcaster %s.",
+                    await (
+                        self.redemption_subscription_client
+                        .subscribe_to_redemptions(
+                            replacement_welcome.session_id,
                             broadcaster_id,
                         )
+                    )
+
+                    logger.info(
+                        "Re-subscribed to Twitch channel-point "
+                        "redemptions for broadcaster %s.",
+                        broadcaster_id,
+                    )
 
                     await websocket.close()
 
@@ -275,7 +306,9 @@ class EventSubWebSocketService:
 
                     logger.info(
                         "Twitch EventSub redemption WebSocket "
-                        "handover completed. New session: %s",
+                        "handover completed for broadcaster %s. "
+                        "New session: %s",
+                        broadcaster_id,
                         welcome.session_id,
                     )
 
@@ -288,7 +321,9 @@ class EventSubWebSocketService:
 
                 logger.exception(
                     "Twitch EventSub redemption connection "
-                    "failed. Reconnecting automatically."
+                    "failed for broadcaster %s. "
+                    "Reconnecting automatically.",
+                    broadcaster_id,
                 )
 
                 try:

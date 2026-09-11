@@ -6,6 +6,8 @@ from collections.abc import (
 )
 from dataclasses import dataclass, field
 
+from dotenv.main import logger
+
 from chimebuddy.models import (
     AccountLinkSession,
     BroadcasterRequest,
@@ -286,6 +288,20 @@ class AccountLinkingService:
 
             validation = await self.oauth_client.validate(
                 tokens.access_token
+            )
+
+            logger.info(
+                "Twitch broadcaster authorization received: "
+                "user_id=%s, login=%s, requested_scopes=%s, "
+                "granted_scopes=%s, missing_scopes=%s",
+                validation.user_id,
+                validation.login,
+                sorted(challenge.requested_scopes),
+                sorted(validation.scopes),
+                sorted(
+                    set(challenge.requested_scopes)
+                    - set(validation.scopes)
+                ),
             )
 
             self._validate_authorization(

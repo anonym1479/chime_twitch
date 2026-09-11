@@ -87,6 +87,54 @@ class TwitchHelixGateway:
         )
         self.token_manager = token_manager
 
+    async def get_user_by_login(
+        self,
+        login: str,
+    ) -> tuple[str, str] | None:
+        login = self._required_text(login, "login")
+
+        status, data = await self._request(
+            "GET",
+            "/users",
+            params={
+                "login": login,
+            },
+            required_scopes=(),
+        )
+
+        if status != 200:
+            self._raise_api_error(status, data)
+
+        if not isinstance(data, dict):
+            raise InvalidTwitchResponseError(
+                "Twitch returned a non-object response."
+            )
+
+        users = data.get("data")
+
+        if not isinstance(users, list) or not users:
+            return None
+
+        user = users[0]
+
+        if not isinstance(user, dict):
+            raise InvalidTwitchResponseError(
+                "Twitch returned an invalid user object."
+            )
+
+        user_id = user.get("id")
+        display_name = user.get("display_name")
+
+        if not isinstance(user_id, str):
+            raise InvalidTwitchResponseError(
+                "Twitch user response is missing id."
+            )
+
+        if not isinstance(display_name, str):
+            display_name = login
+
+        return user_id, display_name
+
     async def get_channel_information(
         self,
         broadcaster_twitch_user_id: str,
@@ -433,6 +481,7 @@ class TwitchHelixGateway:
         broadcaster_twitch_user_id: str,
         user_twitch_user_id: str,
         duration_seconds: int,
+        reason: str = "ban_or_vip",
     ) -> None:
         broadcaster_id = self._required_text(
             broadcaster_twitch_user_id,
@@ -454,6 +503,10 @@ class TwitchHelixGateway:
                         "user_twitch_user_id",
                     ),
                     "duration": duration_seconds,
+                    "reason": self._required_text(
+                        reason,
+                        "reason",
+                    ),
                 }
             },
             required_scopes=("moderator:manage:banned_users",),
