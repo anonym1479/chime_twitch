@@ -196,7 +196,7 @@ class BanOrVipService:
     ) -> None:
         await self.helix_gateway.send_message(
             redemption.broadcaster_twitch_user_id,
-            f"🔨 ÍRÁS! @{redemption.user_login}, Nyertél 24óra TO-t!",
+            f"🔨 ÍRÁS! @{redemption.user_login}, nyertél 24óra TO-t!",
         )
 
         await asyncio.sleep(2)
@@ -218,12 +218,33 @@ class BanOrVipService:
                 await asyncio.sleep(5)
             except TimeoutError:
                 pass
-            await self.helix_gateway.timeout_user(
-                redemption.broadcaster_twitch_user_id,
-                redemption.user_twitch_user_id,
-                TIMEOUT_DURATION_SECONDS,
-                reason="ban_or_vip",
-            )
+            try:
+                await self.helix_gateway.timeout_user(
+                    redemption.broadcaster_twitch_user_id,
+                    redemption.user_twitch_user_id,
+                    TIMEOUT_DURATION_SECONDS,
+                    reason="ban_or_vip",
+                )
+            except TwitchAPIError as exc:
+                if (
+                    exc.status == 400
+                    and exc.message
+                    == "The user specified in the user_id field may not be banned/timed out."
+                ):
+                    await self.helix_gateway.send_message(
+                        redemption.broadcaster_twitch_user_id,
+                        f"🔨 @{redemption.user_login}, "
+                        "moderátorként könnyű.. 😏",
+                    )
+                    logger.info(
+                        "Redemption %s completed as moderator; timeout skipped for user %s.",
+                        redemption.redemption_id,
+                        redemption.user_login,
+                    )
+                    return
+
+                raise
+            
             await self.helix_gateway.send_message(
                 redemption.broadcaster_twitch_user_id,
                 f"🔨 @{redemption.user_login} 24óra múlva találkozunk!",
