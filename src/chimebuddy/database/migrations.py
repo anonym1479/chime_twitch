@@ -668,4 +668,13 @@ MIGRATIONS = (
             """,
         ),
     ),
+    Migration(
+        version=13,
+        name="remove_ban_or_vip_custom_odds",
+        statements=(
+            """
+            DROP TABLE IF EXISTS ban_or_vip_custom_odds
+            """,
+        ),
+    ),
 )
