@@ -236,6 +236,18 @@ class BanOrVipService:
                         f"🔨 @{redemption.user_login}, "
                         "moderátorként könnyű.. 😏",
                     )
+
+                    await self.action_log_repository.create_success(
+                        redemption_id=redemption.redemption_id,
+                        broadcaster_twitch_user_id=(
+                            redemption.broadcaster_twitch_user_id
+                        ),
+                        user_login=redemption.user_login,
+                        outcome="moderator",
+                        vip_chance=vip_chance,
+                        action="Timeout skipped for moderator",
+                    )
+
                     logger.info(
                         "Redemption %s completed as moderator; timeout skipped for user %s.",
                         redemption.redemption_id,
