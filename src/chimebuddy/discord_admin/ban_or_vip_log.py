@@ -33,7 +33,7 @@ class DiscordBanOrVipLogger:
                 f"**Ban vagy VIP**\n"
                 f"Twitch: `{log.user_login}`\n"
                 f"Eredmény: **{log.outcome}**\n"
-                f"Végrehajtva: {log.action}\n"
+                f"VIP esély: `{log.vip_chance:.1f}%`\n"
                 f"Időpont: {log.occurred_at}\n"
                 f"Redemption ID: `{log.redemption_id}`",
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -56,9 +56,8 @@ class DiscordBanOrVipLogger:
         if not isinstance(parent, discord.TextChannel):
             raise RuntimeError("Broadcaster dashboard is not a text channel.")
         thread = await parent.create_thread(
-            name="ban-vagy-vip-log",
-            type=discord.ChannelType.private_thread,
-            invitable=False,
+            name="Ban/VIP Log",
+            type=discord.ChannelType.public_thread,
         )
         await self.log_repository.save_thread_id(broadcaster_id, str(thread.id))
         return thread
