@@ -769,11 +769,29 @@ class EventSubWebSocketService:
     ) -> None:
         if self.redemption_handler is None:
             return
+    
+        logger.info(
+            "Received Twitch channel-point redemption notification."
+        )
+    
         try:
             redemption = parse_channel_point_redemption(envelope)
         except EventSubMessageError as exc:
-            logger.warning("Ignored malformed reward redemption: %s", exc)
+            logger.warning(
+                "Ignored malformed reward redemption: %s",
+                exc,
+            )
             return
+    
+        logger.info(
+            "Parsed redemption: broadcaster=%s, user=%s, "
+            "reward_id=%s, redemption_id=%s",
+            redemption.broadcaster_twitch_user_id,
+            redemption.user_login,
+            redemption.reward_id,
+            redemption.redemption_id,
+        )
+    
         asyncio.create_task(
             self._run_redemption_handler(redemption),
             name=f"reward-redemption-{redemption.redemption_id}",
