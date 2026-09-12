@@ -56,10 +56,27 @@ class BanOrVipService:
         return f"ban_or_vip.reward_id.{str(broadcaster_twitch_user_id).strip()}"
 
     async def handle_redemption(self, redemption: ChannelPointRedemption) -> None:
+
+        logger.info(
+            "Handling Ban/VIP redemption: broadcaster=%s, "
+            "user=%s, reward_id=%s, redemption_id=%s",
+            redemption.broadcaster_twitch_user_id,
+            redemption.user_login,
+            redemption.reward_id,
+            redemption.redemption_id,
+        )
+
         reward_id = await self.settings_repository.get(
             self.reward_setting_key(redemption.broadcaster_twitch_user_id)
         )
         if reward_id != redemption.reward_id:
+            logger.warning(
+                "Ignoring redemption %s: reward ID mismatch. "
+                "configured=%s, received=%s",
+                redemption.redemption_id,
+                reward_id,
+                redemption.reward_id,
+            )
             return
         if redemption.redemption_id in self._redemption_ids:
             return
@@ -130,6 +147,7 @@ class BanOrVipService:
                     user_login=redemption.user_login,
                     outcome="already_vip",
                     vip_chance=vip_chance,
+                    action="already VIP",
                 )
 
                 logger.info(
@@ -166,6 +184,7 @@ class BanOrVipService:
             user_login=redemption.user_login,
             outcome="FEJ",
             vip_chance=vip_chance,
+            action="added VIP",
         )
 
     async def _last_word_then_timeout(
@@ -203,6 +222,7 @@ class BanOrVipService:
                 user_login=redemption.user_login,
                 outcome="ÍRÁS",
                 vip_chance=vip_chance,
+                action="Timeout (24h)",
             )
         finally:
             self._last_word_windows.pop(key, None)

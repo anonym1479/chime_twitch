@@ -28,20 +28,22 @@ class RewardActionLogRepository:
         user_login: str,
         outcome: str,
         vip_chance: float,
+        action: str,
     ) -> None:
         async with self.database.connect() as connection:
             await connection.execute(
                 """INSERT INTO reward_action_logs (
                     redemption_id, broadcaster_twitch_user_id, user_login,
-                    outcome, vip_chance, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    outcome, vip_chance, occurred_at, action
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     redemption_id,
                     broadcaster_twitch_user_id,
                     user_login,
                     outcome,
                     vip_chance,
-                    datetime.now(timezone.utc).isoformat()
+                    datetime.now(timezone.utc).isoformat(),
+                    action
                 ),
             )
             await connection.commit()
