@@ -136,7 +136,7 @@ class BanOrVipService:
                     redemption.broadcaster_twitch_user_id,
                     f"🪙 @{redemption.user_login}, "
                     "Már VIP vagy bolond! "
-                    "Megúsztad a TO-t. (Egyelőre ;) )",
+                    "Megúsztad. (egyelőre ;) )",
                 )
 
                 await self.action_log_repository.create_success(
@@ -173,7 +173,8 @@ class BanOrVipService:
 
         await self.helix_gateway.send_message(
             redemption.broadcaster_twitch_user_id,
-            f"🪙 FEJ! @{redemption.user_login} 7 nap VIP-et nyert!",
+            f"🪙 FEJ! @{redemption.user_login} 7 nap VIP-et nyert! "
+            f"Használd egészséggel!",
         )
 
         await self.action_log_repository.create_success(
@@ -195,9 +196,20 @@ class BanOrVipService:
     ) -> None:
         await self.helix_gateway.send_message(
             redemption.broadcaster_twitch_user_id,
-            f"🔨 @{redemption.user_login}, utolsó szó jogán?",
+            f"🔨 ÍRÁS! @{redemption.user_login}, Nyertél 24óra TO-t!",
         )
-        key = (redemption.broadcaster_twitch_user_id, redemption.user_twitch_user_id)
+
+        await asyncio.sleep(2)
+
+        await self.helix_gateway.send_message(
+            redemption.broadcaster_twitch_user_id,
+            f"🔨 @{redemption.user_login}, Szeretnél valamit mondani az utolsó szó jogán?",
+        )
+
+        key = (
+            redemption.broadcaster_twitch_user_id,
+            redemption.user_twitch_user_id
+        )
         window = LastWordWindow(*key, asyncio.Event())
         self._last_word_windows[key] = window
         try:
