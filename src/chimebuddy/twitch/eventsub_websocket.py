@@ -279,38 +279,27 @@ class EventSubWebSocketService:
                         reconnect_url is None
                         or stop_event.is_set()
                     ):
-                        return
+                        break  # FIXED: Used “break” instead of “return,” so the outer loop resumes (Gemini)
 
                     replacement, replacement_welcome = (
                         await self._connect(reconnect_url)
                     )
 
-                    await (
-                        self.redemption_subscription_client
-                        .subscribe_to_redemptions(
-                            replacement_welcome.session_id,
-                            broadcaster_id,
-                        )
-                    )
-
-                    logger.info(
-                        "Re-subscribed to Twitch channel-point "
-                        "redemptions for broadcaster %s.",
-                        broadcaster_id,
-                    )
-
-                    await websocket.close()
-
-                    websocket = replacement
-                    welcome = replacement_welcome
+                    # FIXED: Removed the unnecessary `subscribe_to_redemptions` call;
+                    # Twitch automatically transfers subscriptions. (Gemini)
 
                     logger.info(
                         "Twitch EventSub redemption WebSocket "
                         "handover completed for broadcaster %s. "
                         "New session: %s",
                         broadcaster_id,
-                        welcome.session_id,
+                        replacement_welcome.session_id,
                     )
+
+                    await websocket.close()
+
+                    websocket = replacement
+                    welcome = replacement_welcome
 
             except asyncio.CancelledError:
                 raise
