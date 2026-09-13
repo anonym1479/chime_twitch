@@ -143,7 +143,7 @@ class EventSubWebSocketService:
 
         while not stop_event.is_set():
             try:
-                await self._run_connection(stop_event)
+                await self._run_chat_connection(stop_event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -268,7 +268,7 @@ class EventSubWebSocketService:
 
                 while not stop_event.is_set():
                     reconnect_url = (
-                        await self._consume_until_reconnect(
+                        await self._process_until_handover(
                             websocket,
                             welcome.keepalive_timeout_seconds,
                             stop_event,
@@ -330,7 +330,7 @@ class EventSubWebSocketService:
                 ):
                     await websocket.close()
 
-    async def _run_connection(
+    async def _run_chat_connection(
         self,
         stop_event: asyncio.Event,
     ) -> None:
@@ -340,7 +340,7 @@ class EventSubWebSocketService:
 
         try:
             subscribed_ids, failed_ids = (
-                await self._subscribe_all(
+                await self._subscribe_to_chat_events(
                     welcome.session_id
                 )
             )
@@ -370,7 +370,7 @@ class EventSubWebSocketService:
 
             while not stop_event.is_set():
                 reconnect_url = (
-                    await self._consume_until_reconnect(
+                    await self._process_until_handover(
                         websocket,
                         welcome.keepalive_timeout_seconds,
                         stop_event,
@@ -533,7 +533,7 @@ class EventSubWebSocketService:
                 "Failed to persist EventSub health."
             )
 
-    async def _subscribe_all(
+    async def _subscribe_to_chat_events(
         self,
         websocket_session_id: str,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -574,7 +574,7 @@ class EventSubWebSocketService:
             tuple(failed_ids),
         )
 
-    async def _consume_until_reconnect(
+    async def _process_until_handover(
         self,
         websocket: aiohttp.ClientWebSocketResponse,
         keepalive_timeout_seconds: int,
