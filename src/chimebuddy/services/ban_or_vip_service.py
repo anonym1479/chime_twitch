@@ -255,6 +255,33 @@ class BanOrVipService:
                     )
                     return
 
+                if (
+                    exc.status == 422
+                    and exc.message
+                    == "The specified user is a moderator of this channel."
+                ):
+                    await self.helix_gateway.send_message(
+                        redemption.broadcaster_twitch_user_id,
+                        f"🪙 @{redemption.user_login}, "
+                        "moderátorként hova akarsz te VIP-et bolond? 😏",
+                    )
+                    await self.action_log_repository.create_success(
+                        redemption_id=redemption.redemption_id,
+                        broadcaster_twitch_user_id=(
+                            redemption.broadcaster_twitch_user_id
+                        ),
+                        user_login=redemption.user_login,
+                        outcome="already_mod",
+                        vip_chance=vip_chance,
+                        action="VIP skipped for moderator",
+                    )
+                    logger.info(
+                        "Ban/VIP redemption %s resolved as already_mod for moderator %s.",
+                        redemption.redemption_id,
+                        redemption.user_login,
+                    )
+                    return
+
                 raise
             
             await self.helix_gateway.send_message(
